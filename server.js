@@ -17,7 +17,7 @@ const CORS_ORIGIN = process.env.NODE_ENV === 'production'
 
 // CORS configuration
 app.use(cors({
-  origin: ['http://localhost:3006', 'http://192.168.1.132:3006'],
+  origin: 'https://clipboard.javascriptbit.com',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
@@ -26,8 +26,8 @@ app.use(cors({
 // Enable pre-flight requests for all routes
 app.options('*', cors());
 
-// Serve static files from the 'build' directory
-app.use(express.static(path.join(__dirname, 'build')));
+// Serve static files from the React app
+app.use(express.static(path.join(__dirname, 'client/build')));
 
 // Parse JSON bodies
 app.use(express.json());
@@ -54,7 +54,7 @@ app.get('/api/protected', verifyToken, (req, res) => {
 
 // Handle any requests that don't match the ones above
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'build', 'index.html'));
+  res.sendFile(path.join(__dirname, 'client/build/index.html'));
 });
 
 const wss = new WebSocket.Server({ server });
