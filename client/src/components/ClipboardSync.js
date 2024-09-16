@@ -114,7 +114,7 @@ async function connectWebSocket(supabase, setStatus, setWsStatus, updateDeviceSt
     return null;
   }
   const deviceId = localStorage.getItem('deviceId');
-  const wsUrl = process.env.REACT_APP_WS_URL;
+  const wsUrl = process.env.NODE_ENV === 'development' ? process.env.REACT_APP_WS_URL : window.location.origin.replace(/^http/, 'ws');
   if (!wsUrl) {
     console.error('WebSocket URL is not defined in environment variables');
     return null;
