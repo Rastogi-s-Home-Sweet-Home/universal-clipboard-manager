@@ -18,10 +18,17 @@ function App() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <header className="bg-primary text-primary-foreground p-4">
-        <h1 className="text-2xl md:text-3xl font-bold text-center">Clipboard Sync</h1>
-      </header>
-      <main className="flex-grow flex items-center justify-center p-4">
+      {!isAuthenticated && (
+        <div className="text-center mt-12 mb-8">
+          <h1 className="text-4xl md:text-5xl font-bold mb-4 text-primary">
+            Universal Clipboard Manager
+          </h1>
+          <p className="text-xl md:text-2xl text-gray-600 max-w-3xl mx-auto">
+            Sync your clipboard across all your devices securely and effortlessly.
+          </p>
+        </div>
+      )}
+      <main className="flex-grow flex justify-center p-4">
         <div className="w-full max-w-md">
           {isAuthenticated ? <ClipboardSync /> : <AuthForm />}
         </div>

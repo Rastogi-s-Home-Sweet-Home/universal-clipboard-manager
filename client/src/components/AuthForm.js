@@ -24,7 +24,7 @@ function AuthForm() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="max-w-sm mx-auto space-y-4 pt-8 md:pt-8">
       <Input 
         type="email" 
         value={email} 

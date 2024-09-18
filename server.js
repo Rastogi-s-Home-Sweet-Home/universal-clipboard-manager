@@ -17,14 +17,11 @@ const CORS_ORIGIN = process.env.NODE_ENV === 'production'
 
 // CORS configuration
 app.use(cors({
-  origin: 'https://clipboard.javascriptbit.com',
+  origin: CORS_ORIGIN,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 }));
-
-// Enable pre-flight requests for all routes
-app.options('*', cors());
 
 // Serve static files from the React app
 app.use(express.static(path.join(__dirname, 'client/build')));

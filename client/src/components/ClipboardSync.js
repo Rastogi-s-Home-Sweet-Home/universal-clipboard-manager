@@ -6,156 +6,9 @@ import DeviceManagement from './DeviceManagement';
 import ClipboardHistory from './ClipboardHistory';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
-
-
-function openDatabase() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open('ClipboardManagerDB', 1);
-    request.onerror = (event) => reject('Error opening database');
-    request.onsuccess = (event) => resolve(event.target.result);
-    request.onupgradeneeded = (event) => {
-      const db = event.target.result;
-      db.createObjectStore('clipboardHistory', { keyPath: 'id', autoIncrement: true });
-    };
-  });
-}
-
-async function saveToHistory(content, type) {
-  const db = await openDatabase();
-  const transaction = db.transaction(['clipboardHistory'], 'readwrite');
-  const objectStore = transaction.objectStore('clipboardHistory');
-  objectStore.add({ content, timestamp: Date.now(), type });
-}
-
-function getDeviceName() {
-  const ua = navigator.userAgent;
-  let deviceName = 'Unknown Device';
-
-  if (/(tablet|ipad|playbook|silk)|(android(?!.*mobi))/i.test(ua)) {
-    deviceName = 'Tablet';
-  } else if (/Mobile|iP(hone|od)|Android|BlackBerry|IEMobile|Kindle|Silk-Accelerated|(hpw|web)OS|Opera M(obi|ini)/.test(ua)) {
-    deviceName = 'Mobile';
-  } else {
-    deviceName = 'Desktop';
-  }
-
-  if (/(iPhone|iPod|iPad)/i.test(ua)) {
-    deviceName += ' - iOS';
-  } else if (/Android/.test(ua)) {
-    deviceName += ' - Android';
-  } else if (/Mac OS X/.test(ua)) {
-    deviceName += ' - macOS';
-  } else if (/Windows/.test(ua)) {
-    deviceName += ' - Windows';
-  } else if (/Linux/.test(ua)) {
-    deviceName += ' - Linux';
-  }
-
-  if (/Chrome/.test(ua)) {
-    deviceName += ' (Chrome)';
-  } else if (/Firefox/.test(ua)) {
-    deviceName += ' (Firefox)';
-  } else if (/Safari/.test(ua)) {
-    deviceName += ' (Safari)';
-  } else if (/Edge/.test(ua)) {
-    deviceName += ' (Edge)';
-  } else if (/Opera|OPR/.test(ua)) {
-    deviceName += ' (Opera)';
-  }
-
-  return deviceName;
-}
-
-function fallbackCopyTextToClipboard(text, setStatus) {
-  const textArea = document.createElement('textarea');
-  textArea.value = text;
-  document.body.appendChild(textArea);
-  textArea.select();
-  try {
-    document.execCommand('copy');
-    setStatus('Copied to clipboard');
-  } catch (err) {
-    console.error('Fallback copy failed:', err);
-    setStatus('Copy failed. Please copy manually.');
-  }
-  document.body.removeChild(textArea);
-}
-
-async function updateDeviceStatus(isOnline, supabase) {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) return;
-
-  const deviceName = getDeviceName();
-  const currentDeviceId = localStorage.getItem('deviceId');
-
-  if (!currentDeviceId) {
-    const { data, error } = await supabase
-      .from('devices')
-      .insert({ user_id: session.user.id, name: deviceName, is_online: isOnline })
-      .select();
-    if (error) {
-      console.error('Error creating device:', error);
-      return;
-    }
-    localStorage.setItem('deviceId', data[0].id);
-  } else {
-    await supabase
-      .from('devices')
-      .update({ name: deviceName, is_online: isOnline, last_active: new Date().toISOString() })
-      .eq('id', currentDeviceId);
-  }
-}
-
-async function connectWebSocket(supabase, setStatus, setWsStatus, updateDeviceStatus, setClipboardContent) {
-  console.log('Connecting WebSocket...');
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) {
-    console.error('No active session');
-    return null;
-  }
-  const deviceId = localStorage.getItem('deviceId');
-  const wsUrl = process.env.NODE_ENV === 'development' ? process.env.REACT_APP_WS_URL : window.location.origin.replace(/^http/, 'ws');
-  if (!wsUrl) {
-    console.error('WebSocket URL is not defined in environment variables');
-    return null;
-  }
-  const fullWsUrl = `${wsUrl}/ws?token=${session.access_token}&deviceId=${deviceId}`;
-  console.log('Attempting to connect to WebSocket URL:', fullWsUrl);
-  const newWs = new WebSocket(fullWsUrl);
-
-  newWs.onopen = () => {
-    console.log('WebSocket connected successfully');
-    setStatus('Connected');
-    setWsStatus('connected');
-    updateDeviceStatus(true, supabase);
-  };
-  newWs.onclose = (event) => {
-    console.log('WebSocket disconnected', event.code, event.reason);
-    setStatus('Disconnected');
-    setWsStatus('disconnected');
-    updateDeviceStatus(false, supabase);
-  };
-  newWs.onerror = (error) => {
-    console.error('WebSocket error:', error);
-    setStatus('WebSocket error');
-    setWsStatus('error');
-  };
-  newWs.onmessage = (event) => {
-    console.log('Received message:', event.data);
-    try {
-      const data = JSON.parse(event.data);
-      if (data.type === 'clipboard') {
-        setClipboardContent(data.content);
-        setStatus('Received new content');
-        saveToHistory(data.content, 'received');
-      }
-    } catch (error) {
-      console.error('Error parsing message:', error);
-    }
-  };
-
-  return newWs;
-}
+import { saveToHistory, updateDeviceStatus } from '../utils/dbUtils';
+import { getDeviceName } from '../utils/deviceUtils';
+import { fallbackCopyTextToClipboard } from '../utils/generalUtils';
 
 function ClipboardSync() {
   const [clipboardContent, setClipboardContent] = useState('');
@@ -165,9 +18,58 @@ function ClipboardSync() {
   const [showHistory, setShowHistory] = useState(false);
   const wsRef = useRef(null);
 
+  const connectWebSocket = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      console.error('No active session');
+      return null;
+    }
+    const deviceId = localStorage.getItem('deviceId');
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.hostname; // Use the current hostname
+    const port = process.env.NODE_ENV === 'development' ? process.env.REACT_APP_WS_PORT : (window.location.port ?? ''); // Use 3000 in dev mode
+
+    const wsUrl = `${protocol}//${host}:${port}/ws?token=${session.access_token}&deviceId=${deviceId}`;
+
+    console.log('Attempting to connect to WebSocket URL:', wsUrl);
+    const newWs = new WebSocket(wsUrl);
+
+    newWs.onopen = () => {
+      console.log('WebSocket connected successfully');
+      setStatus('Connected');
+      setWsStatus('connected');
+      updateDeviceStatus(true, getDeviceName());
+    };
+    newWs.onclose = (event) => {
+      console.log('WebSocket disconnected', event.code, event.reason);
+      setStatus('Disconnected');
+      setWsStatus('disconnected');
+      updateDeviceStatus(false, getDeviceName());
+    };
+    newWs.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setStatus('WebSocket error');
+      setWsStatus('error');
+    };
+    newWs.onmessage = (event) => {
+      console.log('Received message:', event.data);
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'clipboard') {
+          setClipboardContent(data.content);
+          setStatus('Received new content');
+          saveToHistory(data.content, 'received');
+        }
+      } catch (error) {
+        console.error('Error parsing message:', error);
+      }
+    };
+
+    return newWs;
+  }, []);
+
   const handleSend = useCallback(() => {
     console.log('handleSend called');
-    console.log('WebSocket readyState:', wsRef.current?.readyState);
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       const message = JSON.stringify({ type: 'clipboard', content: clipboardContent });
       wsRef.current.send(message);
@@ -177,7 +79,7 @@ function ClipboardSync() {
     } else {
       console.log('WebSocket is not connected. Current state:', wsRef.current?.readyState);
       setStatus('WebSocket is not connected. Reconnecting...');
-      connectWebSocket(supabase, setStatus, setWsStatus, updateDeviceStatus, setClipboardContent).then(ws => {
+      connectWebSocket().then(ws => {
         wsRef.current = ws;
         if (ws && ws.readyState === WebSocket.OPEN) {
           const message = JSON.stringify({ type: 'clipboard', content: clipboardContent });
@@ -190,7 +92,7 @@ function ClipboardSync() {
         }
       });
     }
-  }, [clipboardContent, setStatus, setWsStatus, setClipboardContent, connectWebSocket]);
+  }, [clipboardContent, connectWebSocket]);
 
   const handleCopy = useCallback((content = clipboardContent) => {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -212,18 +114,18 @@ function ClipboardSync() {
     if (wsRef.current) {
       wsRef.current.close();
     }
-    connectWebSocket(supabase, setStatus, setWsStatus, updateDeviceStatus, setClipboardContent).then(ws => {
+    connectWebSocket().then(ws => {
       wsRef.current = ws;
     });
-  }, [setStatus, setWsStatus, setClipboardContent]);
+  }, [connectWebSocket]);
 
   useEffect(() => {
     let reconnectInterval;
     let pingInterval;
     const connect = async () => {
-      const ws = await connectWebSocket(supabase, setStatus, setWsStatus, updateDeviceStatus, setClipboardContent);
+      const ws = await connectWebSocket();
       wsRef.current = ws;
-      await updateDeviceStatus(true, supabase);
+      await updateDeviceStatus(true, getDeviceName());
     };
     connect();
 
@@ -253,12 +155,12 @@ function ClipboardSync() {
       if (wsRef.current) {
         wsRef.current.close();
       }
-      updateDeviceStatus(false, supabase);
+      updateDeviceStatus(false, getDeviceName());
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       clearInterval(reconnectInterval);
       clearInterval(pingInterval);
     };
-  }, []);
+  }, [connectWebSocket]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -267,26 +169,53 @@ function ClipboardSync() {
     }
   };
 
+  useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        updateDeviceStatus(true, getDeviceName());
+      }
+    };
+    checkAuth();
+  }, []);
+
   return (
-    <div className="space-y-6">
+    <div className="container mx-auto px-4 pt-4">
+      <p className="text-center text-gray-700 mb-6 text-lg font-medium">
+        Copy or paste content below to sync it across all your connected devices instantly.
+      </p>
       <Textarea
         value={clipboardContent}
         onChange={(e) => setClipboardContent(e.target.value)}
         placeholder="Paste or type content here"
-        className="min-h-[150px]"
+        className="min-h-[150px] mb-4"
       />
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5 mb-4">
         <Button onClick={handleSend} className="w-full">Send</Button>
         <Button onClick={() => handleCopy()} variant="secondary" className="w-full">Copy</Button>
         <Button onClick={handleReconnect} variant="outline" className="w-full">Reconnect</Button>
-      </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-3">
         <Button onClick={handleLogout} variant="destructive" className="w-full">Logout</Button>
         <Button onClick={() => setShowHistory(true)} variant="outline" className="w-full">History</Button>
-        <Button onClick={() => setShowDeviceManagement(true)} variant="outline" className="w-full">Manage Devices</Button>
       </div>
       <WebSocketStatus status={wsStatus} />
-      <div className="text-sm text-muted-foreground">{status}</div>
+      <div className="text-sm text-muted-foreground mb-4">{status}</div>
+      <div className="mb-4">
+        <Button 
+          onClick={() => {
+            console.log('Toggling Device Management');
+            setShowDeviceManagement(!showDeviceManagement);
+          }}
+          variant="outline"
+          className="w-full"
+        >
+          {showDeviceManagement ? 'Hide Device Management' : 'Show Device Management'}
+        </Button>
+      </div>
+      {showDeviceManagement && (
+        <div className="bg-card text-card-foreground p-4 rounded-lg shadow mb-4">
+          <DeviceManagement isOpen={showDeviceManagement} onClose={() => setShowDeviceManagement(false)} />
+        </div>
+      )}
       <div className="bg-card text-card-foreground p-4 rounded-lg shadow">
         <h2 className="text-lg font-semibold mb-2">Connected Devices</h2>
         <DeviceList />
@@ -298,10 +227,6 @@ function ClipboardSync() {
           handleCopy(content);
           setClipboardContent(content);
         }}
-      />
-      <DeviceManagement
-        isOpen={showDeviceManagement}
-        onClose={() => setShowDeviceManagement(false)}
       />
     </div>
   );

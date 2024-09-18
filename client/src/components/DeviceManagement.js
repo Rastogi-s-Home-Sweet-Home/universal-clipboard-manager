@@ -3,23 +3,45 @@ import { supabase } from '../supabaseClient';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { XMarkIcon } from '@heroicons/react/24/solid';
+import { getDeviceName } from '../utils/deviceUtils';
 
 function DeviceManagement({ isOpen, onClose }) {
   const [devices, setDevices] = useState([]);
   const [editingDevice, setEditingDevice] = useState(null);
   const [newName, setNewName] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const currentDeviceId = localStorage.getItem('deviceId');
 
   const fetchDevices = useCallback(async () => {
     if (!isOpen) return;
     setIsLoading(true);
     try {
+      console.log('Fetching devices...');
       const { data, error } = await supabase
         .from('devices')
         .select('*')
         .order('last_active', { ascending: false });
 
       if (error) throw error;
+      console.log('Fetched devices:', data);
+
+      const currentDeviceExists = data.some(device => device.id === currentDeviceId);
+      console.log('Current device exists:', currentDeviceExists);
+
+      if (!currentDeviceExists) {
+        console.log('Current device not found, adding it...');
+        const { data: userData } = await supabase.auth.getUser();
+        const deviceName = getDeviceName();
+        
+        data.unshift({
+          id: currentDeviceId,
+          name: deviceName,
+          user_id: userData.user.id,
+          is_online: true,
+          last_active: new Date().toISOString()
+        });
+      }
+
       setDevices(data);
     } catch (error) {
       console.error('Error fetching devices:', error);
@@ -27,9 +49,10 @@ function DeviceManagement({ isOpen, onClose }) {
     } finally {
       setIsLoading(false);
     }
-  }, [isOpen]);
+  }, [isOpen, currentDeviceId]);
 
   useEffect(() => {
+    console.log('DeviceManagement component mounted or isOpen changed');
     fetchDevices();
   }, [fetchDevices]);
 
@@ -41,7 +64,13 @@ function DeviceManagement({ isOpen, onClose }) {
         .eq('id', id);
 
       if (error) throw error;
-      fetchDevices();
+
+      if (id === currentDeviceId) {
+        await supabase.auth.signOut();
+        window.location.reload();
+      } else {
+        fetchDevices();
+      }
     } catch (error) {
       console.error('Error deleting device:', error);
       alert('Failed to delete device. Please try again.');
