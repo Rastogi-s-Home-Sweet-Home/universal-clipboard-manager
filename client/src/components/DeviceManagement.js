@@ -4,13 +4,15 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { XMarkIcon } from '@heroicons/react/24/solid';
 import { getDeviceName } from '../utils/deviceUtils';
+import { useWebSocket } from '../context/WebSocketContext'; // Import the context
 
 function DeviceManagement({ isOpen, onClose }) {
   const [devices, setDevices] = useState([]);
   const [editingDevice, setEditingDevice] = useState(null);
   const [newName, setNewName] = useState('');
   const [isLoading, setIsLoading] = useState(true);
-  const currentDeviceId = localStorage.getItem('deviceId');
+  const currentDeviceId = localStorage.getItem('deviceId'); // Get the current device ID
+  const wsRef = useWebSocket(); // Use the context
 
   const fetchDevices = useCallback(async () => {
     if (!isOpen) return;
@@ -25,21 +27,27 @@ function DeviceManagement({ isOpen, onClose }) {
       if (error) throw error;
       console.log('Fetched devices:', data);
 
+      // Check if the current device already exists
       const currentDeviceExists = data.some(device => device.id === currentDeviceId);
       console.log('Current device exists:', currentDeviceExists);
 
+      // Only add the current device if it doesn't exist
       if (!currentDeviceExists) {
         console.log('Current device not found, adding it...');
         const { data: userData } = await supabase.auth.getUser();
         const deviceName = getDeviceName();
         
-        data.unshift({
-          id: currentDeviceId,
-          name: deviceName,
-          user_id: userData.user.id,
-          is_online: true,
-          last_active: new Date().toISOString()
-        });
+        const { error: insertError } = await supabase
+          .from('devices')
+          .insert({
+            id: currentDeviceId,
+            name: deviceName,
+            user_id: userData.user.id, // Set the user_id to the current user's ID
+            is_online: true,
+            last_active: new Date().toISOString()
+          });
+
+        if (insertError) throw insertError; // Handle insertion error
       }
 
       setDevices(data);
@@ -66,10 +74,11 @@ function DeviceManagement({ isOpen, onClose }) {
       if (error) throw error;
 
       if (id === currentDeviceId) {
-        await supabase.auth.signOut();
-        window.location.reload();
+        // Do not remove deviceId from localStorage
+        await supabase.auth.signOut(); // Log out the user
+        window.location.reload(); // Reload the page
       } else {
-        fetchDevices();
+        fetchDevices(); // Refresh the device list
       }
     } catch (error) {
       console.error('Error deleting device:', error);
@@ -104,11 +113,23 @@ function DeviceManagement({ isOpen, onClose }) {
     try {
       const { error } = await supabase
         .from('devices')
-        .update({ is_online: false })
+        .update({ is_online: false }) // Mark the device as offline
         .eq('id', id);
 
       if (error) throw error;
-      fetchDevices();
+
+      if (id === currentDeviceId) {
+        localStorage.removeItem('deviceId'); // Remove deviceId from localStorage
+        await supabase.auth.signOut(); // Log out the user
+        // Send logout message to all connected devices
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          const message = JSON.stringify({ type: 'logout' });
+          wsRef.current.send(message);
+        }
+        window.location.reload(); // Reload the page
+      } else {
+        fetchDevices(); // Refresh the device list
+      }
     } catch (error) {
       console.error('Error logging out device:', error);
       alert('Failed to log out device. Please try again.');
@@ -135,7 +156,7 @@ function DeviceManagement({ isOpen, onClose }) {
         ) : (
           <ul className="space-y-4">
             {devices.map(device => (
-              <li key={device.id} className="bg-background p-3 rounded-md shadow">
+              <li key={device.id} className={`bg-background p-3 rounded-md shadow ${device.id === currentDeviceId ? 'border border-blue-500' : ''}`}>
                 {editingDevice && editingDevice.id === device.id ? (
                   <div className="flex flex-col space-y-2">
                     <Input
@@ -149,6 +170,7 @@ function DeviceManagement({ isOpen, onClose }) {
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
                       <span className="font-medium">{device.name}</span>
+                      {device.id === currentDeviceId && <span className="text-blue-500 font-bold">(Current Device)</span>}
                       <span className={`text-sm ${device.is_online ? 'text-green-500' : 'text-red-500'}`}>
                         {device.is_online ? 'Online' : 'Offline'}
                       </span>

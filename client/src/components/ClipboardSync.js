@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import WebSocketStatus from './WebSocketStatus';
-import DeviceList from './DeviceList';
 import DeviceManagement from './DeviceManagement';
 import ClipboardHistory from './ClipboardHistory';
 import { Button } from './ui/button';
@@ -9,6 +8,8 @@ import { Textarea } from './ui/textarea';
 import { saveToHistory, updateDeviceStatus } from '../utils/dbUtils';
 import { getDeviceName } from '../utils/deviceUtils';
 import { fallbackCopyTextToClipboard } from '../utils/generalUtils';
+import { useWebSocket } from '../context/WebSocketContext'; // Import the context
+import ConnectedDevices from './ConnectedDevices'; // Import the new component
 
 function ClipboardSync() {
   const [clipboardContent, setClipboardContent] = useState('');
@@ -16,7 +17,18 @@ function ClipboardSync() {
   const [wsStatus, setWsStatus] = useState('disconnected');
   const [showDeviceManagement, setShowDeviceManagement] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const wsRef = useRef(null);
+  const wsRef = useWebSocket(); // Use the context
+
+  const handleLogout = useCallback(async () => {
+    // Invalidate the session without removing deviceId
+    await supabase.auth.signOut(); // Log out the user
+    if (wsRef.current) {
+      wsRef.current.close(); // Close the WebSocket connection
+    }
+    // Optionally, you can update the device status to offline
+    await updateDeviceStatus(false, getDeviceName());
+    setStatus('Logged out. Device ID retained.');
+  }, [wsRef]);
 
   const connectWebSocket = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -59,6 +71,9 @@ function ClipboardSync() {
           setClipboardContent(data.content);
           setStatus('Received new content');
           saveToHistory(data.content, 'received');
+        } else if (data.type === 'logout') {
+          console.log('Logging out due to session invalidation');
+          handleLogout(); // Call the logout function to handle session invalidation
         }
       } catch (error) {
         console.error('Error parsing message:', error);
@@ -66,7 +81,7 @@ function ClipboardSync() {
     };
 
     return newWs;
-  }, []);
+  }, [handleLogout]);
 
   const handleSend = useCallback(() => {
     console.log('handleSend called');
@@ -92,7 +107,7 @@ function ClipboardSync() {
         }
       });
     }
-  }, [clipboardContent, connectWebSocket]);
+  }, [clipboardContent, connectWebSocket, wsRef]);
 
   const handleCopy = useCallback((content = clipboardContent) => {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -117,7 +132,7 @@ function ClipboardSync() {
     connectWebSocket().then(ws => {
       wsRef.current = ws;
     });
-  }, [connectWebSocket]);
+  }, [connectWebSocket, wsRef]);
 
   useEffect(() => {
     let reconnectInterval;
@@ -160,20 +175,14 @@ function ClipboardSync() {
       clearInterval(reconnectInterval);
       clearInterval(pingInterval);
     };
-  }, [connectWebSocket]);
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
-  };
+  }, [connectWebSocket, wsRef]);
 
   useEffect(() => {
     const checkAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
-        updateDeviceStatus(true, getDeviceName());
+        const deviceName = getDeviceName(); // Get the device name
+        await updateDeviceStatus(true, deviceName); // Update or create device entry
       }
     };
     checkAuth();
@@ -190,6 +199,9 @@ function ClipboardSync() {
         placeholder="Paste or type content here"
         className="min-h-[150px] mb-4"
       />
+      <div className="mb-4"> {/* Add margin below the Textarea */}
+        <ConnectedDevices /> {/* Move ConnectedDevices above the Show Device Management button */}
+      </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5 mb-4">
         <Button onClick={handleSend} className="w-full">Send</Button>
         <Button onClick={() => handleCopy()} variant="secondary" className="w-full">Copy</Button>
@@ -216,10 +228,6 @@ function ClipboardSync() {
           <DeviceManagement isOpen={showDeviceManagement} onClose={() => setShowDeviceManagement(false)} />
         </div>
       )}
-      <div className="bg-card text-card-foreground p-4 rounded-lg shadow">
-        <h2 className="text-lg font-semibold mb-2">Connected Devices</h2>
-        <DeviceList />
-      </div>
       <ClipboardHistory
         isOpen={showHistory}
         onClose={() => setShowHistory(false)}

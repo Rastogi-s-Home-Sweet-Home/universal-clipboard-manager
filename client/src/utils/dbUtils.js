@@ -36,9 +36,11 @@ export async function updateDeviceStatus(isOnline, deviceName) {
     }
     localStorage.setItem('deviceId', data[0].id);
   } else {
+    // Ensure the user_id is set correctly for the update
     await supabase
       .from('devices')
       .update({ name: deviceName, is_online: isOnline, last_active: new Date().toISOString() })
-      .eq('id', currentDeviceId);
+      .eq('id', currentDeviceId)
+      .eq('user_id', session.user.id); // Ensure the update is for the current user's device
   }
 }
