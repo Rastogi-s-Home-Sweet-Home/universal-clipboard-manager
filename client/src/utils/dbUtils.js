@@ -12,11 +12,11 @@ export async function openDatabase() {
   });
 }
 
-export async function saveToHistory(content, type) {
+export async function saveToHistory(content, type, contentId = null, receipts = []) {
   const db = await openDatabase();
   const transaction = db.transaction(['clipboardHistory'], 'readwrite');
   const objectStore = transaction.objectStore('clipboardHistory');
-  objectStore.add({ content, timestamp: Date.now(), type });
+  objectStore.add({ content, timestamp: Date.now(), type, contentId, receipts: receipts || [] }); // Ensure receipts is an array
 }
 
 export async function updateDeviceStatus(isOnline, deviceName) {
@@ -43,4 +43,22 @@ export async function updateDeviceStatus(isOnline, deviceName) {
       .eq('id', currentDeviceId)
       .eq('user_id', session.user.id); // Ensure the update is for the current user's device
   }
+}
+
+export async function clearHistory() {
+    const db = await openDatabase();
+    const transaction = db.transaction(['clipboardHistory'], 'readwrite');
+    const objectStore = transaction.objectStore('clipboardHistory');
+    const request = objectStore.clear();
+
+    return new Promise((resolve, reject) => {
+        request.onsuccess = () => {
+            resolve();
+        };
+
+        request.onerror = (event) => {
+            console.error('Error clearing history:', event.target.error);
+            reject(event.target.error);
+        };
+    });
 }

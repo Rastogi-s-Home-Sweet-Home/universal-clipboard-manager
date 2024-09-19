@@ -17,18 +17,17 @@ function ClipboardSync() {
   const [wsStatus, setWsStatus] = useState('disconnected');
   const [showDeviceManagement, setShowDeviceManagement] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [receivedReceipts, setReceivedReceipts] = useState({}); // Track received receipts
   const wsRef = useWebSocket(); // Use the context
 
   const handleLogout = useCallback(async () => {
-    // Invalidate the session without removing deviceId
     await supabase.auth.signOut(); // Log out the user
     if (wsRef.current) {
       wsRef.current.close(); // Close the WebSocket connection
     }
-    // Optionally, you can update the device status to offline
     await updateDeviceStatus(false, getDeviceName());
     setStatus('Logged out. Device ID retained.');
-  }, [wsRef]);
+  }, [wsRef]); // Include wsRef in the dependency array
 
   const connectWebSocket = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -67,13 +66,30 @@ function ClipboardSync() {
       console.log('Received message:', event.data);
       try {
         const data = JSON.parse(event.data);
+        const currentDeviceId = localStorage.getItem('deviceId'); // Get the current device ID
         if (data.type === 'clipboard') {
-          setClipboardContent(data.content);
-          setStatus('Received new content');
-          saveToHistory(data.content, 'received');
-        } else if (data.type === 'logout') {
-          console.log('Logging out due to session invalidation');
-          handleLogout(); // Call the logout function to handle session invalidation
+          // Only process if the message is not from this device
+          if (data.deviceId !== currentDeviceId) {
+            setClipboardContent(data.content);
+            setStatus('Received new content');
+            saveToHistory(data.content, 'received', data.contentId, []); // Save the content with its ID
+
+            // Send a receipt back to the sender
+            const receiptMessage = JSON.stringify({ type: 'receipt', contentId: data.contentId, deviceId: currentDeviceId });
+            wsRef.current.send(receiptMessage);
+          } else {
+            console.log('Ignoring message from own device:', data.content);
+          }
+        } else if (data.type === 'receipt') {
+          console.log('Received receipt for content ID:', data.contentId);
+          setReceivedReceipts((prev) => {
+            const updatedReceipts = { ...prev };
+            if (!updatedReceipts[data.contentId]) {
+              updatedReceipts[data.contentId] = []; // Initialize if not present
+            }
+            updatedReceipts[data.contentId].push(data.deviceId); // Add the device ID to the receipt
+            return updatedReceipts;
+          });
         }
       } catch (error) {
         console.error('Error parsing message:', error);
@@ -81,27 +97,37 @@ function ClipboardSync() {
     };
 
     return newWs;
-  }, [handleLogout]);
+  }, [wsRef]); // Include wsRef in the dependency array
 
   const handleSend = useCallback(() => {
     console.log('handleSend called');
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      const message = JSON.stringify({ type: 'clipboard', content: clipboardContent });
+      const contentId = Date.now(); // Unique ID for the content
+      const currentDeviceId = localStorage.getItem('deviceId'); // Get the current device ID
+      const message = JSON.stringify({ type: 'clipboard', content: clipboardContent, contentId, deviceId: currentDeviceId });
       wsRef.current.send(message);
       console.log('Sent message:', message);
       setStatus('Sent to other devices');
-      saveToHistory(clipboardContent, 'sent');
+      saveToHistory(clipboardContent, 'sent', contentId, []); // Initialize receipts as empty
+
+      // Initialize receipt tracking for this content
+      setReceivedReceipts((prev) => ({ ...prev, [contentId]: [] }));
     } else {
       console.log('WebSocket is not connected. Current state:', wsRef.current?.readyState);
       setStatus('WebSocket is not connected. Reconnecting...');
       connectWebSocket().then(ws => {
         wsRef.current = ws;
         if (ws && ws.readyState === WebSocket.OPEN) {
-          const message = JSON.stringify({ type: 'clipboard', content: clipboardContent });
+          const contentId = Date.now(); // Unique ID for the content
+          const currentDeviceId = localStorage.getItem('deviceId'); // Get the current device ID
+          const message = JSON.stringify({ type: 'clipboard', content: clipboardContent, contentId, deviceId: currentDeviceId });
           ws.send(message);
           console.log('Sent message after reconnection:', message);
           setStatus('Sent to other devices');
-          saveToHistory(clipboardContent, 'sent');
+          saveToHistory(clipboardContent, 'sent', contentId, []); // Initialize receipts as empty
+
+          // Initialize receipt tracking for this content
+          setReceivedReceipts((prev) => ({ ...prev, [contentId]: [] }));
         } else {
           setStatus('Failed to reconnect. Please try again.');
         }
@@ -199,9 +225,6 @@ function ClipboardSync() {
         placeholder="Paste or type content here"
         className="min-h-[150px] mb-4"
       />
-      <div className="mb-4"> {/* Add margin below the Textarea */}
-        <ConnectedDevices /> {/* Move ConnectedDevices above the Show Device Management button */}
-      </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5 mb-4">
         <Button onClick={handleSend} className="w-full">Send</Button>
         <Button onClick={() => handleCopy()} variant="secondary" className="w-full">Copy</Button>
@@ -211,6 +234,9 @@ function ClipboardSync() {
       </div>
       <WebSocketStatus status={wsStatus} />
       <div className="text-sm text-muted-foreground mb-4">{status}</div>
+      <div className="mb-4">
+        <ConnectedDevices />
+      </div>
       <div className="mb-4">
         <Button 
           onClick={() => {
@@ -235,6 +261,7 @@ function ClipboardSync() {
           handleCopy(content);
           setClipboardContent(content);
         }}
+        receivedReceipts={receivedReceipts} // Pass the receipts as a prop
       />
     </div>
   );

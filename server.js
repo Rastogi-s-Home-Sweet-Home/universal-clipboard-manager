@@ -71,9 +71,7 @@ wss.on('connection', async (ws, request) => {
   
   try {
     const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
-    console.log('JWT Secret (first 10 chars):', SUPABASE_JWT_SECRET.substring(0, 10));
     const decoded = jwt.verify(token, SUPABASE_JWT_SECRET);
-    console.log('Decoded token:', decoded);
     const userId = decoded.sub;
 
     console.log('User authenticated:', userId);
@@ -107,8 +105,8 @@ wss.on('connection', async (ws, request) => {
           console.log('Broadcasting clipboard content to other devices');
           const userClients = clients.get(userId);
           userClients.forEach((client) => {
-            if (client !== ws && client.readyState === WebSocket.OPEN) {
-              client.send(JSON.stringify({ type: 'clipboard', content: data.content }));
+            if (client !== ws && client.readyState === WebSocket.OPEN) { // Ensure we don't send to the sender
+              client.send(JSON.stringify({ type: 'clipboard', content: data.content, contentId: data.contentId, deviceId })); // Include deviceId
             }
           });
         } else if (data.type === 'ping') {

@@ -1,24 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Button } from './ui/button';
 import { XMarkIcon } from '@heroicons/react/24/solid';
+import { Tooltip } from './ui/tooltip'; // Assuming you have a Tooltip component
+import { openDatabase, clearHistory } from '../utils/dbUtils'; // Import openDatabase from dbUtils
 
-function ClipboardHistory({ isOpen, onClose, onCopy }) {
+function ClipboardHistory({ isOpen, onClose, onCopy, receivedReceipts }) { // Accept receivedReceipts as a prop
   const [history, setHistory] = useState([]);
-
-  const openDatabase = useCallback(() => {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open('ClipboardManagerDB', 1);
-
-      request.onerror = (event) => reject('Error opening database');
-
-      request.onsuccess = (event) => resolve(event.target.result);
-
-      request.onupgradeneeded = (event) => {
-        const db = event.target.result;
-        db.createObjectStore('clipboardHistory', { keyPath: 'id', autoIncrement: true });
-      };
-    });
-  }, []);
 
   const loadHistory = useCallback(async () => {
     if (isOpen) {
@@ -32,26 +19,11 @@ function ClipboardHistory({ isOpen, onClose, onCopy }) {
         setHistory(result.sort((a, b) => b.timestamp - a.timestamp).slice(0, 100));
       };
     }
-  }, [isOpen, openDatabase]);
+  }, [isOpen]);
 
   useEffect(() => {
     loadHistory();
   }, [loadHistory]);
-
-  const clearHistory = async () => {
-    const db = await openDatabase();
-    const transaction = db.transaction(['clipboardHistory'], 'readwrite');
-    const objectStore = transaction.objectStore('clipboardHistory');
-    const request = objectStore.clear();
-
-    request.onsuccess = () => {
-      setHistory([]);
-    };
-
-    request.onerror = (event) => {
-      console.error('Error clearing history:', event.target.error);
-    };
-  };
 
   const getTypeIcon = (type) => {
     switch (type) {
@@ -64,6 +36,11 @@ function ClipboardHistory({ isOpen, onClose, onCopy }) {
       default:
         return '-';
     }
+  };
+
+  const onClearHistory = async () => {
+    await clearHistory();
+    setHistory([]);
   };
 
   if (!isOpen) return null;
@@ -81,7 +58,7 @@ function ClipboardHistory({ isOpen, onClose, onCopy }) {
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-2xl font-bold">Clipboard History</h2>
           {history.length > 0 && (
-            <Button onClick={clearHistory} variant="destructive" size="sm">
+            <Button onClick={onClearHistory} variant="destructive" size="sm">
               Clear History
             </Button>
           )}
@@ -97,6 +74,11 @@ function ClipboardHistory({ isOpen, onClose, onCopy }) {
               <div key={item.id} className="flex items-center justify-between bg-gray-100 p-2 rounded">
                 <span className="mr-2">{getTypeIcon(item.type)}</span>
                 <span className="truncate flex-grow mr-2">{item.content}</span>
+                {item.type === 'received' && Array.isArray(receivedReceipts[item.contentId]) && receivedReceipts[item.contentId].length > 0 && ( // Check if receipts is an array
+                  <Tooltip content={receivedReceipts[item.contentId].join(', ')}>
+                    <span className="cursor-pointer text-blue-500">ℹ️</span>
+                  </Tooltip>
+                )}
                 <Button onClick={() => onCopy(item.content)} size="sm">Copy</Button>
               </div>
             ))}
