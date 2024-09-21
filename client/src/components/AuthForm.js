@@ -6,6 +6,7 @@ import { Input } from './ui/input';
 function AuthForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [message, setMessage] = useState(''); // State for messages
 
   const handleAuth = async (action) => {
     try {
@@ -16,10 +17,20 @@ function AuthForm() {
         result = await supabase.auth.signUp({ email, password });
       }
 
-      if (result.error) throw result.error;
+      if (result.error) {
+        // Handle specific error codes
+        if (result.error.status === 429) {
+          setMessage('Too many requests. Please try again later.');
+        } else {
+          setMessage(`Error: ${result.error.message}`);
+        }
+      } else {
+        // Successful sign-up
+        setMessage('Sign-up successful! Please check your email for confirmation.');
+      }
     } catch (error) {
       console.error(`${action} error:`, error);
-      alert(`An error occurred during ${action}. Please try again.`);
+      setMessage(`An error occurred during ${action}. Please try again.`);
     }
   };
 
@@ -43,6 +54,7 @@ function AuthForm() {
         <Button onClick={() => handleAuth('login')} className="flex-1">Login</Button>
         <Button onClick={() => handleAuth('register')} variant="outline" className="flex-1">Register</Button>
       </div>
+      {message && <p className="text-center text-red-500">{message}</p>} {/* Display message */}
     </div>
   );
 }
