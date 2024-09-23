@@ -5,8 +5,10 @@ import { Input } from './ui/input';
 import { XMarkIcon } from '@heroicons/react/24/solid';
 import { getDeviceName } from '../utils/deviceUtils';
 import { useWebSocket } from '../context/WebSocketContext'; // Import the context
+import { useToast } from './ui/toast'; // Import the toast hook
 
 function DeviceManagement({ isOpen, onClose }) {
+  const { addToast } = useToast(); // Initialize the toast
   const [devices, setDevices] = useState([]);
   const [editingDevice, setEditingDevice] = useState(null);
   const [newName, setNewName] = useState('');
@@ -27,37 +29,45 @@ function DeviceManagement({ isOpen, onClose }) {
       if (error) throw error;
       console.log('Fetched devices:', data);
 
-      // Check if the current device already exists
       const currentDeviceExists = data.some(device => device.id === currentDeviceId);
       console.log('Current device exists:', currentDeviceExists);
 
-      // Only add the current device if it doesn't exist
       if (!currentDeviceExists) {
         console.log('Current device not found, adding it...');
         const { data: userData } = await supabase.auth.getUser();
         const deviceName = getDeviceName();
-        
+
         const { error: insertError } = await supabase
           .from('devices')
           .insert({
             id: currentDeviceId,
             name: deviceName,
-            user_id: userData.user.id, // Set the user_id to the current user's ID
+            user_id: userData.user.id,
             is_online: true,
             last_active: new Date().toISOString()
-          });
+          })
+          .onConflict('id') // Handle conflict by updating the existing record
+          .upsert(); // Use upsert to avoid duplicates
 
-        if (insertError) throw insertError; // Handle insertion error
+        if (insertError) {
+          if (insertError.code === '23505') { // Duplicate key error code
+            addToast({ title: 'Error', description: 'This device is already registered.', variant: 'destructive', id: Date.now() }); // User-friendly message
+          } else {
+            console.error('Error inserting device:', insertError);
+            addToast({ title: 'Error', description: 'Failed to add device. Please try again.', variant: 'destructive', id: Date.now() });
+          }
+          throw insertError; // Handle insertion error
+        }
       }
 
       setDevices(data);
     } catch (error) {
       console.error('Error fetching devices:', error);
-      alert('Failed to fetch devices. Please try again.');
+      addToast({ title: 'Error', description: 'Failed to fetch devices. Please try again.', variant: 'destructive', id: Date.now() }); // Replace alert with toast
     } finally {
       setIsLoading(false);
     }
-  }, [isOpen, currentDeviceId]);
+  }, [isOpen, currentDeviceId, addToast]);
 
   useEffect(() => {
     console.log('DeviceManagement component mounted or isOpen changed');
@@ -82,7 +92,7 @@ function DeviceManagement({ isOpen, onClose }) {
       }
     } catch (error) {
       console.error('Error deleting device:', error);
-      alert('Failed to delete device. Please try again.');
+      addToast({ title: 'Error', description: 'Failed to delete device. Please try again.', variant: 'destructive', id: Date.now() }); // Replace alert with toast
     }
   };
 
@@ -105,7 +115,7 @@ function DeviceManagement({ isOpen, onClose }) {
       fetchDevices();
     } catch (error) {
       console.error('Error updating device:', error);
-      alert('Failed to update device. Please try again.');
+      addToast({ title: 'Error', description: 'Failed to update device. Please try again.', variant: 'destructive', id: Date.now() }); // Replace alert with toast
     }
   };
 
@@ -132,7 +142,7 @@ function DeviceManagement({ isOpen, onClose }) {
       }
     } catch (error) {
       console.error('Error logging out device:', error);
-      alert('Failed to log out device. Please try again.');
+      addToast({ title: 'Error', description: 'Failed to log out device. Please try again.', variant: 'destructive', id: Date.now() }); // Replace alert with toast
     }
   };
 
