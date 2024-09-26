@@ -8,211 +8,102 @@ import { Textarea } from './ui/textarea';
 import { saveToHistory, updateDeviceStatus } from '../utils/dbUtils';
 import { getDeviceName } from '../utils/deviceUtils';
 import { fallbackCopyTextToClipboard } from '../utils/generalUtils';
-import { useWebSocket } from '../context/WebSocketContext'; // Import the context
-import ConnectedDevices from './ConnectedDevices'; // Import the new component
+import { useWebSocket } from '../context/WebSocketContext';
+import ConnectedDevices from './ConnectedDevices';
 
 function ClipboardSync() {
   const [clipboardContent, setClipboardContent] = useState('');
   const [status, setStatus] = useState('');
-  const [wsStatus, setWsStatus] = useState('disconnected');
   const [showDeviceManagement, setShowDeviceManagement] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [receivedReceipts, setReceivedReceipts] = useState({}); // Track received receipts
-  const wsRef = useWebSocket(); // Use the context
+  const [receivedReceipts, setReceivedReceipts] = useState({});
+  const { wsStatus, sendMessage, connect, disconnect } = useWebSocket();
 
   const handleLogout = useCallback(async () => {
-    await supabase.auth.signOut(); // Log out the user
-    if (wsRef.current) {
-      wsRef.current.close(); // Close the WebSocket connection
-    }
+    await supabase.auth.signOut();
+    disconnect();
     await updateDeviceStatus(false, getDeviceName());
     setStatus('Logged out. Device ID retained.');
-  }, [wsRef]); // Include wsRef in the dependency array
+  }, [disconnect]);
 
-  const connectWebSocket = useCallback(async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      console.error('No active session');
-      return null;
+  const handleSend = useCallback(() => {
+    if (clipboardContent.trim()) {
+      const contentId = Date.now().toString();
+      const message = {
+        type: 'clipboard',
+        content: clipboardContent,
+        contentId,
+        deviceId: localStorage.getItem('deviceId')
+      };
+      sendMessage(JSON.stringify(message));
+      saveToHistory(clipboardContent, 'sent', contentId, []);
+      setStatus('Content sent');
+    } else {
+      setStatus('Nothing to send');
     }
-    const deviceId = localStorage.getItem('deviceId');
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname; // Use the current hostname
-    const port = process.env.NODE_ENV === 'development' ? process.env.REACT_APP_WS_PORT : (window.location.port ?? ''); // Use 3000 in dev mode
+  }, [clipboardContent, sendMessage]);
 
-    const wsUrl = `${protocol}//${host}:${port}/ws?token=${session.access_token}&deviceId=${deviceId}`;
+  const handleCopy = useCallback((content = clipboardContent) => {
+    if (content) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(content).then(() => {
+          setStatus('Copied to clipboard');
+        }).catch(err => {
+          console.error('Failed to copy: ', err);
+          fallbackCopyTextToClipboard(content);
+          setStatus('Copied to clipboard (fallback method)');
+        });
+      } else {
+        fallbackCopyTextToClipboard(content);
+        setStatus('Copied to clipboard (fallback method)');
+      }
+    } else {
+      setStatus('Nothing to copy');
+    }
+  }, [clipboardContent]);
 
-    console.log('Attempting to connect to WebSocket URL:', wsUrl);
-    const newWs = new WebSocket(wsUrl);
-
-    newWs.onopen = () => {
-      console.log('WebSocket connected successfully');
-      setStatus('Connected');
-      setWsStatus('connected');
-      updateDeviceStatus(true, getDeviceName());
-    };
-    newWs.onclose = (event) => {
-      console.log('WebSocket disconnected', event.code, event.reason);
-      setStatus('Disconnected');
-      setWsStatus('disconnected');
-      updateDeviceStatus(false, getDeviceName());
-    };
-    newWs.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      setStatus('WebSocket error');
-      setWsStatus('error');
-    };
-    newWs.onmessage = (event) => {
-      console.log('Received message:', event.data);
+  useEffect(() => {
+    const handleWebSocketMessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
-        const currentDeviceId = localStorage.getItem('deviceId'); // Get the current device ID
-        if (data.type === 'clipboard') {
-          // Only process if the message is not from this device
-          if (data.deviceId !== currentDeviceId) {
-            setClipboardContent(data.content);
-            setStatus('Received new content');
-            saveToHistory(data.content, 'received', data.contentId, []); // Save the content with its ID
+        let data;
+        if (typeof event.data === 'string') {
+          data = JSON.parse(event.data);
+        } else if (typeof event.data === 'object') {
+          data = event.data;
+        } else {
+          console.error('Received unknown data type:', typeof event.data);
+          return;
+        }
 
-            // Send a receipt back to the sender
-            const receiptMessage = JSON.stringify({ type: 'receipt', contentId: data.contentId, deviceId: currentDeviceId });
-            wsRef.current.send(receiptMessage);
-          } else {
-            console.log('Ignoring message from own device:', data.content);
-          }
+        const currentDeviceId = localStorage.getItem('deviceId');
+        if (data.type === 'clipboard' && data.deviceId !== currentDeviceId) {
+          setClipboardContent(data.content);
+          setStatus('Received new content');
+          saveToHistory(data.content, 'received', data.contentId, []);
+          sendMessage(JSON.stringify({ type: 'receipt', contentId: data.contentId, deviceId: currentDeviceId }));
         } else if (data.type === 'receipt') {
-          console.log('Received receipt for content ID:', data.contentId);
           setReceivedReceipts((prev) => {
             const updatedReceipts = { ...prev };
             if (!updatedReceipts[data.contentId]) {
-              updatedReceipts[data.contentId] = []; // Initialize if not present
+              updatedReceipts[data.contentId] = [];
             }
-            updatedReceipts[data.contentId].push(data.deviceId); // Add the device ID to the receipt
+            updatedReceipts[data.contentId].push(data.deviceId);
             return updatedReceipts;
           });
         }
       } catch (error) {
-        console.error('Error parsing message:', error);
+        console.error('Error handling message:', error);
       }
     };
 
-    return newWs;
-  }, [wsRef]); // Include wsRef in the dependency array
+    // Set up the message listener
+    window.addEventListener('message', handleWebSocketMessage);
 
-  const handleSend = useCallback(() => {
-    console.log('handleSend called');
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      const contentId = Date.now(); // Unique ID for the content
-      const currentDeviceId = localStorage.getItem('deviceId'); // Get the current device ID
-      const message = JSON.stringify({ type: 'clipboard', content: clipboardContent, contentId, deviceId: currentDeviceId });
-      wsRef.current.send(message);
-      console.log('Sent message:', message);
-      setStatus('Sent to other devices');
-      saveToHistory(clipboardContent, 'sent', contentId, []); // Initialize receipts as empty
-
-      // Initialize receipt tracking for this content
-      setReceivedReceipts((prev) => ({ ...prev, [contentId]: [] }));
-    } else {
-      console.log('WebSocket is not connected. Current state:', wsRef.current?.readyState);
-      setStatus('WebSocket is not connected. Reconnecting...');
-      connectWebSocket().then(ws => {
-        wsRef.current = ws;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          const contentId = Date.now(); // Unique ID for the content
-          const currentDeviceId = localStorage.getItem('deviceId'); // Get the current device ID
-          const message = JSON.stringify({ type: 'clipboard', content: clipboardContent, contentId, deviceId: currentDeviceId });
-          ws.send(message);
-          console.log('Sent message after reconnection:', message);
-          setStatus('Sent to other devices');
-          saveToHistory(clipboardContent, 'sent', contentId, []); // Initialize receipts as empty
-
-          // Initialize receipt tracking for this content
-          setReceivedReceipts((prev) => ({ ...prev, [contentId]: [] }));
-        } else {
-          setStatus('Failed to reconnect. Please try again.');
-        }
-      });
-    }
-  }, [clipboardContent, connectWebSocket, wsRef]);
-
-  const handleCopy = useCallback((content = clipboardContent) => {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(content)
-        .then(() => {
-          setStatus('Copied to clipboard');
-          saveToHistory(content, 'copied');
-        })
-        .catch((err) => {
-          console.error('Failed to copy to clipboard:', err);
-          fallbackCopyTextToClipboard(content, setStatus);
-        });
-    } else {
-      fallbackCopyTextToClipboard(content, setStatus);
-    }
-  }, [clipboardContent, setStatus]);
-
-  const handleReconnect = useCallback(() => {
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
-    connectWebSocket().then(ws => {
-      wsRef.current = ws;
-    });
-  }, [connectWebSocket, wsRef]);
-
-  useEffect(() => {
-    let reconnectInterval;
-    let pingInterval;
-    const connect = async () => {
-      const ws = await connectWebSocket();
-      wsRef.current = ws;
-      await updateDeviceStatus(true, getDeviceName());
-    };
-    connect();
-
-    const handleVisibilityChange = () => {
-      if (!document.hidden && (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN)) {
-        console.log('Page visible, reconnecting WebSocket');
-        connect();
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    reconnectInterval = setInterval(() => {
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        console.log('Attempting to reconnect WebSocket');
-        connect();
-      }
-    }, 30000); // Try to reconnect every 30 seconds
-
-    pingInterval = setInterval(() => {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'ping' }));
-      }
-    }, 20000); // Send a ping every 20 seconds
-
+    // Clean up the listener when the component unmounts
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-      updateDeviceStatus(false, getDeviceName());
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      clearInterval(reconnectInterval);
-      clearInterval(pingInterval);
+      window.removeEventListener('message', handleWebSocketMessage);
     };
-  }, [connectWebSocket, wsRef]);
-
-  useEffect(() => {
-    const checkAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        const deviceName = getDeviceName(); // Get the device name
-        await updateDeviceStatus(true, deviceName); // Update or create device entry
-      }
-    };
-    checkAuth();
-  }, []);
+  }, [sendMessage]);
 
   return (
     <div className="container mx-auto px-4 pt-4">
@@ -228,7 +119,7 @@ function ClipboardSync() {
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5 mb-4">
         <Button onClick={handleSend} className="w-full">Send</Button>
         <Button onClick={() => handleCopy()} variant="secondary" className="w-full">Copy</Button>
-        <Button onClick={handleReconnect} variant="outline" className="w-full">Reconnect</Button>
+        <Button onClick={connect} variant="outline" className="w-full">Reconnect</Button>
         <Button onClick={handleLogout} variant="destructive" className="w-full">Logout</Button>
         <Button onClick={() => setShowHistory(true)} variant="outline" className="w-full">History</Button>
       </div>
@@ -261,7 +152,7 @@ function ClipboardSync() {
           handleCopy(content);
           setClipboardContent(content);
         }}
-        receivedReceipts={receivedReceipts} // Pass the receipts as a prop
+        receivedReceipts={receivedReceipts}
       />
     </div>
   );
