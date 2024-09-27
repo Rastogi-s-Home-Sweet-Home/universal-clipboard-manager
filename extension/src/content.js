@@ -42,9 +42,6 @@ const getClipboardContent = async () => {
 
 chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
     if (request.action === 'showNotificationAndCopy') {
-        // Show a notification (you might want to use the Notifications API for this)
-        alert('New clipboard content received: ' + request.content);
-
         // Copy the content to clipboard
         navigator.clipboard.writeText(request.content).then(function() {
             console.log('Content copied to clipboard');

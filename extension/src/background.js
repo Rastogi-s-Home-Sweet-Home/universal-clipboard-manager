@@ -25,15 +25,73 @@ function initSupabase(session) {
   }
 }
 
-// Initialize Supabase on extension load
-chrome.storage.local.get(['supabaseSession'], function(result) {
-  if (result.supabaseSession) {
-    initSupabase(result.supabaseSession);
-    initWebSocket();
+// Function to refresh the session
+async function refreshSession() {
+  try {
+    const { data, error } = await supabase.auth.refreshSession();
+    if (error) throw error;
+    if (data.session) {
+      chrome.storage.local.set({ supabaseSession: data.session });
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('Error refreshing session:', error);
+    return false;
+  }
+}
+
+// Function to check and refresh the session
+async function checkAndRefreshSession() {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session) {
+    if (new Date(session.expires_at) < new Date()) {
+      return await refreshSession();
+    }
+    return true;
+  }
+  return false;
+}
+
+// Initialize Supabase and WebSocket on extension load
+chrome.runtime.onInstalled.addListener(async (details) => {
+  const { supabaseSession } = await chrome.storage.local.get('supabaseSession');
+  if (supabaseSession) {
+    initSupabase(supabaseSession);
+    if (await checkAndRefreshSession()) {
+      initWebSocket();
+    }
   } else {
     initSupabase();
   }
+
+  // Request notification permission on install
+  if (details.reason === 'install') {
+    chrome.notifications.getPermissionLevel((level) => {
+      if (level !== 'granted') {
+        chrome.permissions.request({
+          permissions: ['notifications']
+        }, (granted) => {
+          if (granted) {
+            console.log('Notification permission granted');
+          } else {
+            console.log('Notification permission denied');
+          }
+        });
+      }
+    });
+  }
+  checkNotificationPermission(); // Check permission on install
 });
+
+// Periodically check and refresh the session
+setInterval(async () => {
+  if (await checkAndRefreshSession()) {
+    if (!ws || ws.readyState === WebSocket.CLOSED) {
+      initWebSocket();
+    }
+  }
+}, 5 * 60 * 1000); // Check every 5 minutes
 
 // Function to initialize WebSocket connection
 function initWebSocket() {
@@ -64,73 +122,110 @@ function initWebSocket() {
     sendAuthMessage();
   };
 
-  ws.onmessage = (event) => {
-    console.log('Received:', event.data);
-    try {
-      const data = JSON.parse(event.data);
-      if (data.type === 'clipboard') {
-        chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-          if (tabs[0]) {
-            chrome.tabs.sendMessage(tabs[0].id, {
-              action: 'showNotificationAndCopy',
-              content: data.content
-            }, function(response) {
-              if (chrome.runtime.lastError) {
-                console.log('Error sending message to tab:', chrome.runtime.lastError.message);
-                // If the content script isn't ready, inject it and try again
-                chrome.scripting.executeScript({
-                  target: { tabId: tabs[0].id },
-                  files: ['content.js']
-                }, () => {
-                  if (chrome.runtime.lastError) {
-                    console.error('Error injecting content script:', chrome.runtime.lastError.message);
-                  } else {
-                    // Try sending the message again after injecting the content script
-                    chrome.tabs.sendMessage(tabs[0].id, {
-                      action: 'showNotificationAndCopy',
-                      content: data.content
-                    });
-                  }
-                });
-              } else if (response) {
-                console.log('Message sent successfully:', response);
-              }
-            });
-          } else {
-            console.log('No active tab found to send message');
-          }
-        });
-      } else if (data.type === 'auth_success') {
-        console.log('Authentication successful');
-      } else if (data.type === 'auth_error') {
-        console.error('Authentication failed:', data.error);
-        ws.close();
-      }
-    } catch (error) {
-      console.error('Error parsing message:', error);
-    }
-  };
-
-  ws.onerror = (error) => {
-    console.error('WebSocket error:', error);
-    isConnecting = false;
-  };
-
-  ws.onclose = (event) => {
-    console.log('WebSocket disconnected:', event.code, event.reason);
-    isConnecting = false;
-    ws = null;
-
-    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-      reconnectAttempts++;
-      console.log(`Attempting to reconnect (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-      setTimeout(initWebSocket, RECONNECT_INTERVAL * reconnectAttempts);
-    } else {
-      console.error('Max reconnection attempts reached');
-    }
-  };
+  ws.onmessage = handleWebSocketMessage;
+  ws.onerror = handleWebSocketError;
+  ws.onclose = handleWebSocketClose;
 
   console.log('WebSocket initial state:', ws.readyState);
+}
+
+function handleWebSocketMessage(event) {
+  console.log('Received:', event.data);
+  try {
+    const data = JSON.parse(event.data);
+    if (data.type === 'clipboard') {
+      handleClipboardMessage(data);
+    } else if (data.type === 'auth_success') {
+      console.log('Authentication successful');
+    } else if (data.type === 'auth_error') {
+      console.error('Authentication failed:', data.error);
+      ws.close();
+    }
+  } catch (error) {
+    console.error('Error parsing message:', error);
+  }
+}
+
+function handleClipboardMessage(data) {
+  console.log('Handling clipboard message:', data);
+  
+  chrome.notifications.getPermissionLevel((level) => {
+    console.log('Notification permission level:', level);
+    
+    if (level === 'granted') {
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('icon128.png'),
+        title: 'New clipboard content received',
+        message: data.content.substring(0, 50) + (data.content.length > 50 ? '...' : '')
+      }, (notificationId) => {
+        if (chrome.runtime.lastError) {
+          console.error('Notification creation failed:', chrome.runtime.lastError);
+          // Inform the popup that notifications are not working
+          chrome.runtime.sendMessage({ action: 'notifyPermissionDenied' });
+        } else {
+          console.log('Notification created with ID:', notificationId);
+        }
+      });
+    } else {
+      console.log('Notification permission not granted.');
+      chrome.runtime.sendMessage({ action: 'notifyPermissionDenied' });
+    }
+  });
+
+  chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+    if (tabs[0]) {
+      sendMessageToTab(tabs[0].id, {
+        action: 'showNotificationAndCopy',
+        content: data.content
+      });
+    } else {
+      console.log('No active tab found to send message');
+    }
+  });
+}
+
+function sendMessageToTab(tabId, message) {
+  chrome.tabs.sendMessage(tabId, message, function(response) {
+    if (chrome.runtime.lastError) {
+      console.log('Error sending message to tab:', chrome.runtime.lastError.message);
+      injectContentScriptAndRetry(tabId, message);
+    } else if (response) {
+      console.log('Message sent successfully:', response);
+    }
+  });
+}
+
+function injectContentScriptAndRetry(tabId, message) {
+  chrome.scripting.executeScript({
+    target: { tabId: tabId },
+    files: ['content.js']
+  }, () => {
+    if (chrome.runtime.lastError) {
+      console.error('Error injecting content script:', chrome.runtime.lastError.message);
+    } else {
+      sendMessageToTab(tabId, message);
+    }
+  });
+}
+
+function handleWebSocketError(error) {
+  console.error('WebSocket error:', error);
+  isConnecting = false;
+}
+
+function handleWebSocketClose(event) {
+  console.log('WebSocket disconnected:', event.code, event.reason);
+  isConnecting = false;
+  ws = null;
+
+  if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+    reconnectAttempts++;
+    console.log(`Attempting to reconnect (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+    setTimeout(initWebSocket, RECONNECT_INTERVAL * reconnectAttempts);
+  } else {
+    console.error('Max reconnection attempts reached');
+  }
 }
 
 async function sendAuthMessage() {
@@ -181,29 +276,33 @@ async function getDeviceId() {
 // Function to send clipboard content to the server via WebSocket
 async function sendClipboardContent(content) {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      console.error('User not authenticated');
-      return { success: false, error: 'User not authenticated' };
-    }
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      console.log('WebSocket not open, attempting to reconnect...');
-      await new Promise((resolve, reject) => {
-        initWebSocket();
-        const timeout = setTimeout(() => {
-          reject(new Error('WebSocket connection timeout'));
-        }, 10000); // 10 seconds timeout
-        ws.onopen = () => {
-          clearTimeout(timeout);
-          resolve();
-        };
-      });
-    }
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'clipboard', content }));
-      return { success: true };
+    if (await checkAndRefreshSession()) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        console.error('User not authenticated');
+        return { success: false, error: 'User not authenticated' };
+      }
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        console.log('WebSocket not open, attempting to reconnect...');
+        await new Promise((resolve, reject) => {
+          initWebSocket();
+          const timeout = setTimeout(() => {
+            reject(new Error('WebSocket connection timeout'));
+          }, 10000); // 10 seconds timeout
+          ws.onopen = () => {
+            clearTimeout(timeout);
+            resolve();
+          };
+        });
+      }
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'clipboard', content }));
+        return { success: true };
+      } else {
+        throw new Error('WebSocket not in OPEN state after reconnection attempt');
+      }
     } else {
-      throw new Error('WebSocket not in OPEN state after reconnection attempt');
+      throw new Error('User not authenticated');
     }
   } catch (error) {
     console.error('Error sending clipboard content:', error);
@@ -212,10 +311,6 @@ async function sendClipboardContent(content) {
 }
 
 // Listen for messages from content scripts
-chrome.runtime.onInstalled.addListener(async () => {
-  await checkAuthStatus();
-});
-
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'checkAuth') {
     checkAuthStatus().then(sendResponse);
@@ -259,7 +354,6 @@ async function login(email, password) {
     });
     if (error) throw error;
     console.log('Login successful, user:', data.user);
-    // Store the session in Chrome's storage
     chrome.storage.local.set({ supabaseSession: data.session });
     initWebSocket();
     return { success: true, user: data.user };
@@ -277,7 +371,6 @@ async function logout() {
     }
     await supabase.auth.signOut();
     if (ws) ws.close();
-    // Clear the stored session
     chrome.storage.local.remove('supabaseSession');
     return { success: true };
   } catch (error) {
@@ -286,22 +379,25 @@ async function logout() {
   }
 }
 
+// Function to check notification permission
+function checkNotificationPermission() {
+  chrome.notifications.getPermissionLevel((level) => {
+    if (level !== 'granted') {
+      // Send a message to the popup to inform the user
+      chrome.runtime.sendMessage({ action: 'notifyPermissionDenied' });
+    }
+  });
+}
+
 // Initialize WebSocket connection when the service worker starts
 chrome.runtime.onStartup.addListener(() => {
   checkAuthStatus().then(({ isAuthenticated }) => {
     if (isAuthenticated) {
       initWebSocket();
     }
+    checkNotificationPermission(); // Check permission on startup
   });
 });
-
-// Add a function to check WebSocket connection status
-function checkWebSocketStatus() {
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    console.log('WebSocket is not connected. Attempting to reconnect...');
-    initWebSocket();
-  }
-}
 
 // Set up periodic WebSocket status check
 setInterval(() => {

@@ -4,13 +4,13 @@ const CopyPlugin = require('copy-webpack-plugin');
 
 module.exports = {
   entry: {
+    popup: './src/popup.js',
     background: './src/background.js',
-    content: './src/content.js',
-    popup: './src/popup.jsx',
+    content: './src/content.js'
   },
   output: {
-    filename: '[name].js',
     path: path.resolve(__dirname, 'dist'),
+    filename: '[name].js',
   },
   devtool: process.env.NODE_ENV === 'production' ? false : 'source-map',
   module: {
@@ -36,10 +36,12 @@ module.exports = {
       template: './src/popup.html',
       filename: 'popup.html',
       chunks: ['popup'],
+      inject: 'body'
     }),
     new CopyPlugin({
       patterns: [
-        { from: './manifest.json', to: 'manifest.json' },
+        { from: "src/assets/icons", to: "." },
+        { from: "manifest.json", to: "." },
       ],
     }),
   ],

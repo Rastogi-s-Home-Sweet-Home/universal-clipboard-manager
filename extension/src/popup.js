@@ -1,3 +1,5 @@
+console.log('Popup script is running');
+
 document.addEventListener('DOMContentLoaded', function() {
     const loginForm = document.getElementById('loginForm');
     const loggedInView = document.getElementById('loggedInView');
@@ -9,8 +11,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const clipboardContent = document.getElementById('clipboardContent');
 
     function showError(message) {
-        errorMessage.textContent = message;
+        errorMessage.textContent = message + ' Please enable notifications in your browser settings and macOS System Preferences.';
         errorMessage.style.display = 'block';
+        errorMessage.style.color = 'red'; // Ensure the text is red
+        errorMessage.style.fontWeight = 'bold'; // Make it bold for emphasis
     }
 
     function hideError() {
@@ -85,6 +89,12 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+        if (request.action === 'notifyPermissionDenied') {
+            showError('Notifications are turned off. Please enable them in your browser settings and macOS System Preferences to receive clipboard updates.');
+        }
+    });
+
     function showLoginForm() {
         loginForm.style.display = 'block';
         loggedInView.style.display = 'none';
@@ -94,19 +104,6 @@ document.addEventListener('DOMContentLoaded', function() {
         loginForm.style.display = 'none';
         loggedInView.style.display = 'block';
     }
-
-    // ... (existing code)
-
-    chrome.runtime.sendMessage({action: 'sendClipboardContent', content: clipboardContent}, function(response) {
-        if (response.success) {
-            showStatus('Content sent successfully');
-        } else {
-            showError('Failed to send content: ' + (response.error || 'Unknown error'));
-            if (response.error === 'User not authenticated') {
-                showLoginForm();
-            }
-        }
-    });
 
     // ... (existing code)
 });
