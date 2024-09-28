@@ -6,10 +6,28 @@ let supabase;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_INTERVAL = 5000; // 5 seconds
+let previousData = null; // Store the last data sent to the WebSocket
 
 // Initialize Supabase client
 const supabaseUrl = 'https://ycjixhoxikzpmgypldxn.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljaml4aG94aWt6cG1neXBsZHhuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MjYxNDc4NjQsImV4cCI6MjA0MTcyMzg2NH0.iIq2NJIO49jQ5XwuKZlE175HBGZhBpaUpec9p6354AA';
+
+// Closure to manage clipboard data
+const clipboardManager = (() => {
+  let clipboardData = null; // Private variable
+
+  return {
+    setClipboardData: (data) => {
+      clipboardData = data;
+    },
+    getClipboardData: () => {
+      return clipboardData;
+    },
+    clearClipboardData: () => {
+      clipboardData = null;
+    }
+  };
+})();
 
 // Function to initialize Supabase client with a session
 function initSupabase(session) {
@@ -129,26 +147,12 @@ function initWebSocket() {
   console.log('WebSocket initial state:', ws.readyState);
 }
 
-function handleWebSocketMessage(event) {
-  console.log('Received:', event.data);
-  try {
-    const data = JSON.parse(event.data);
-    if (data.type === 'clipboard') {
-      handleClipboardMessage(data);
-    } else if (data.type === 'auth_success') {
-      console.log('Authentication successful');
-    } else if (data.type === 'auth_error') {
-      console.error('Authentication failed:', data.error);
-      ws.close();
-    }
-  } catch (error) {
-    console.error('Error parsing message:', error);
-  }
-}
-
+// Function to handle clipboard messages
 function handleClipboardMessage(data) {
   console.log('Handling clipboard message:', data);
   
+  clipboardManager.setClipboardData(data); // Store data using closure
+
   chrome.notifications.getPermissionLevel((level) => {
     console.log('Notification permission level:', level);
     
@@ -157,11 +161,14 @@ function handleClipboardMessage(data) {
         type: 'basic',
         iconUrl: chrome.runtime.getURL('icon128.png'),
         title: 'New clipboard content received',
-        message: data.content.substring(0, 50) + (data.content.length > 50 ? '...' : '')
+        message: data.content.substring(0, 50) + (data.content.length > 50 ? '...' : ''),
+        priority: 1,
+        buttons: [
+          { title: 'Copy' } // Only one button
+        ]
       }, (notificationId) => {
         if (chrome.runtime.lastError) {
           console.error('Notification creation failed:', chrome.runtime.lastError);
-          // Inform the popup that notifications are not working
           chrome.runtime.sendMessage({ action: 'notifyPermissionDenied' });
         } else {
           console.log('Notification created with ID:', notificationId);
@@ -172,17 +179,31 @@ function handleClipboardMessage(data) {
       chrome.runtime.sendMessage({ action: 'notifyPermissionDenied' });
     }
   });
+}
 
-  chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-    if (tabs[0]) {
-      sendMessageToTab(tabs[0].id, {
-        action: 'showNotificationAndCopy',
-        content: data.content
-      });
-    } else {
-      console.log('No active tab found to send message');
+function handleWebSocketMessage(event) {
+  console.log('Received:', event.data);
+  try {
+    const data = JSON.parse(event.data);
+    if (data.type === 'clipboard') {
+      handleClipboardMessage(data);
+    } else if (data.type === 'auth_success') {
+      console.log('Authentication successful');
+      previousData = null; // Clear previous data on successful auth
+    } else if (data.type === 'auth_error') {
+      console.error('Authentication failed:', data.error);
+      if (data.error === 'Not authenticated') {
+        console.log('Retrying authentication...');
+        sendAuthMessage(); // Retry sending auth message
+        if (previousData) {
+          console.log('Retrying previous data:', previousData);
+          ws.send(JSON.stringify(previousData)); // Retry sending previous data
+        }
+      }
     }
-  });
+  } catch (error) {
+    console.error('Error parsing message:', error);
+  }
 }
 
 function sendMessageToTab(tabId, message) {
@@ -228,21 +249,25 @@ function handleWebSocketClose(event) {
   }
 }
 
+// Function to send authentication message
 async function sendAuthMessage() {
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
       console.error('No active session');
-      return;
+      return; // Exit if no session
     }
+
     const deviceId = await getDeviceId();
     const authMessage = JSON.stringify({
       type: 'auth',
       token: session.access_token,
       deviceId: deviceId
     });
+
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(authMessage);
+      console.log('Auth message sent:', authMessage);
     } else {
       console.error('WebSocket is not open. Unable to send auth message.');
     }
@@ -296,7 +321,8 @@ async function sendClipboardContent(content) {
         });
       }
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'clipboard', content }));
+        previousData = { type: 'clipboard', content }; // Store the data to retry
+        ws.send(JSON.stringify(previousData));
         return { success: true };
       } else {
         throw new Error('WebSocket not in OPEN state after reconnection attempt');
@@ -342,6 +368,7 @@ async function checkAuthStatus() {
   }
 }
 
+// Modify login function to send auth message after successful login
 async function login(email, password) {
   try {
     if (!supabase) {
@@ -355,6 +382,7 @@ async function login(email, password) {
     if (error) throw error;
     console.log('Login successful, user:', data.user);
     chrome.storage.local.set({ supabaseSession: data.session });
+    await sendAuthMessage(); // Send auth message after login
     initWebSocket();
     return { success: true, user: data.user };
   } catch (error) {
@@ -406,3 +434,28 @@ setInterval(() => {
     initWebSocket();
   }
 }, 30000); // Check every 30 seconds
+
+// Add this listener to handle notification button clicks
+chrome.notifications.onButtonClicked.addListener((notificationId, buttonIndex) => {
+  if (buttonIndex === 0) { // Check if the Copy button was clicked
+    const data = clipboardManager.getClipboardData(); // Get data using closure
+    if (data) {
+      // Send the copyToClipboard message to the active tab's content script
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+          chrome.tabs.sendMessage(tabs[0].id, { action: 'copyToClipboard', content: data.content }, (response) => {
+            if (response && response.success) {
+              clipboardManager.clearClipboardData(); // Clear clipboard data after copying
+            } else {
+              console.error('Failed to copy content:', response.error);
+            }
+          });
+        } else {
+          console.error('No active tab found to send message');
+        }
+      });
+    } else {
+      console.error('No clipboard data available to copy.');
+    }
+  }
+});
