@@ -12,7 +12,7 @@ const app = express();
 const server = http.createServer(app);
 
 const CORS_ORIGIN = process.env.NODE_ENV === 'production' 
-  ? 'https://your-production-domain.com' 
+  ? 'https://clipboard.javascriptbit.com' 
   : ['http://localhost:3006', 'http://192.168.1.132:3006'];
 
 // CORS configuration
@@ -58,49 +58,77 @@ const wss = new WebSocket.Server({ server });
 
 const clients = new Map();
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY, // Use the service role key instead of the anon key
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  }
+);
 
 wss.on('connection', async (ws, request) => {
   console.log('New WebSocket connection attempt');
-  const url = new URL(request.url, `http://${request.headers.host}`);
-  const token = url.searchParams.get('token');
-  const deviceId = url.searchParams.get('deviceId');
-  
-  console.log('Received token:', token ? token.substring(0, 10) + '...' : 'No token');
-  console.log('Received deviceId:', deviceId);
-  
-  try {
-    const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
-    const decoded = jwt.verify(token, SUPABASE_JWT_SECRET);
-    const userId = decoded.sub;
 
-    console.log('User authenticated:', userId);
+  let authenticated = false;
+  let userId = null;
+  let deviceId = null;
 
-    // Update device status to online
-    if (deviceId) {
-      const { data, error } = await supabase
-        .from('devices')
-        .update({ is_online: true, last_active: new Date().toISOString() })
-        .eq('id', deviceId);
-      
-      if (error) {
-        console.error('Error updating device status:', error);
-      } else {
-        console.log('Device status updated:', deviceId);
-      }
+  const heartbeat = setInterval(() => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.ping();
     }
+  }, 30000); // Send a ping every 30 seconds
 
-    if (!clients.has(userId)) {
-      clients.set(userId, new Set());
-    }
-    clients.get(userId).add(ws);
-    console.log('Client added for user:', userId);
+  ws.on('message', async (message) => {
+    console.log('Received message:', message.toString());
+    try {
+      const data = JSON.parse(message);
+      if (data.type === 'auth') {
+        // Handle authentication
+        try {
+          const decoded = jwt.verify(data.token, process.env.SUPABASE_JWT_SECRET);
+          userId = decoded.sub;
+          deviceId = data.deviceId;
+          authenticated = true;
+          console.log('User authenticated:', userId);
+          ws.send(JSON.stringify({ type: 'auth_success' }));
 
-    ws.on('message', (message) => {
-      console.log('Received message from client:', message.toString());
-      try {
-        const data = JSON.parse(message);
-        console.log('Parsed message:', data);
+          // Update device status to online
+          if (deviceId) {
+            console.log('Updating device status:', deviceId);
+            const { error } = await supabase
+              .from('devices')
+              .upsert({ 
+                id: deviceId, 
+                user_id: userId, 
+                is_online: true, 
+                last_active: new Date().toISOString(),
+                name: 'Chrome Extension' // Add a default name for the extension
+              }, { onConflict: 'id' });
+            
+            if (error) {
+              console.error('Error updating device status:', error);
+            } else {
+              console.log('Device status updated:', deviceId);
+            }
+          }
+
+          if (!clients.has(userId)) {
+            clients.set(userId, new Set());
+          }
+          clients.get(userId).add(ws);
+          console.log('Client added for user:', userId);
+        } catch (error) {
+          console.error('Authentication error:', error);
+          ws.send(JSON.stringify({ type: 'auth_error', error: 'Invalid token' }));
+          ws.close();
+        }
+      } else if (authenticated) {
+        // Handle other message types (clipboard, ping, etc.)
+        // ... (existing message handling code)
         if (data.type === 'clipboard') {
           console.log('Broadcasting clipboard content to other devices');
           const userClients = clients.get(userId);
@@ -113,12 +141,19 @@ wss.on('connection', async (ws, request) => {
           console.log('Received ping, sending pong');
           ws.send(JSON.stringify({ type: 'pong' }));
         }
-      } catch (error) {
-        console.error('Error handling message:', error);
+      } else {
+        
+        console.error('Received message before authentication');
+        ws.send(JSON.stringify({ type: 'auth_error', error: 'Not authenticated' }));
       }
-    });
+    } catch (error) {
+      console.error('Error handling message:', error);
+    }
+  });
 
-    ws.on('close', async () => {
+  ws.on('close', async () => {
+    clearInterval(heartbeat);
+    if (authenticated && userId) {
       console.log('WebSocket connection closed for user:', userId);
       // Update device status to offline
       if (deviceId) {
@@ -133,11 +168,13 @@ wss.on('connection', async (ws, request) => {
       if (userClients.size === 0) {
         clients.delete(userId);
       }
-    });
-  } catch (error) {
-    console.error('Token verification error:', error);
-    ws.close();
-  }
+    }
+  });
+
+  ws.on('pong', () => {
+    // Reset the connection timeout on pong reception
+    console.log('Received pong from client');
+  });
 });
 
 // Device management routes

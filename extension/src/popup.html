@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Universal Clipboard</title>
+</head>
+<body>
+  <div id="root">
+    <h1>Universal Clipboard</h1>
+    <div id="loginForm" style="display:none;">
+      <input type="email" id="email" placeholder="Email">
+      <input type="password" id="password" placeholder="Password">
+      <button id="loginButton">Login</button>
+    </div>
+    <div id="loggedInView" style="display:none;">
+      <textarea id="clipboardContent"></textarea>
+      <button id="sendButton">Send</button>
+      <button id="logoutButton">Logout</button>
+    </div>
+    <div id="errorMessage" style="display:none; color: red;"></div>
+    <div id="statusMessage" style="display:none; color: green;"></div>
+  </div>
+</body>
+</html>
