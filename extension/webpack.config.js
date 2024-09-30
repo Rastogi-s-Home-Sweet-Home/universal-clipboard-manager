@@ -1,10 +1,11 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const CopyPlugin = require('copy-webpack-plugin');
+const Dotenv = require('dotenv-webpack');
 
 module.exports = {
   entry: {
-    popup: './src/popup.js',
+    popup: './src/popup.jsx',
     background: './src/background.js',
     content: './src/content.js'
   },
@@ -12,7 +13,6 @@ module.exports = {
     path: path.resolve(__dirname, 'dist'),
     filename: '[name].js',
   },
-  devtool: process.env.NODE_ENV === 'production' ? false : 'source-map',
   module: {
     rules: [
       {
@@ -27,7 +27,7 @@ module.exports = {
       },
       {
         test: /\.css$/,
-        use: ['style-loader', 'css-loader'],
+        use: ['style-loader', 'css-loader', 'postcss-loader'],
       },
     ],
   },
@@ -36,16 +36,20 @@ module.exports = {
       template: './src/popup.html',
       filename: 'popup.html',
       chunks: ['popup'],
-      inject: 'body'
     }),
     new CopyPlugin({
       patterns: [
-        { from: "src/assets/icons", to: "." },
+        { from: "src/assets", to: "assets" },
         { from: "manifest.json", to: "." },
       ],
     }),
+    new Dotenv(),
   ],
   resolve: {
     extensions: ['.js', '.jsx'],
   },
+  devtool: 'inline-source-map',
+  optimization: {
+    minimize: false
+  }
 };

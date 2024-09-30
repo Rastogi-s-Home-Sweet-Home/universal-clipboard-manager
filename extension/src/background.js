@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { saveToHistory } from './utils/dbUtils';
 
 let ws = null;
 let isConnecting = false;
@@ -9,8 +10,8 @@ const RECONNECT_INTERVAL = 5000; // 5 seconds
 let previousData = null; // Store the last data sent to the WebSocket
 
 // Initialize Supabase client
-const supabaseUrl = 'https://ycjixhoxikzpmgypldxn.supabase.co';
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljaml4aG94aWt6cG1neXBsZHhuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MjYxNDc4NjQsImV4cCI6MjA0MTcyMzg2NH0.iIq2NJIO49jQ5XwuKZlE175HBGZhBpaUpec9p6354AA';
+const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
+const supabaseKey = process.env.REACT_APP_SUPABASE_KEY;
 
 // Closure to manage clipboard data
 const clipboardManager = (() => {
@@ -126,12 +127,7 @@ function initWebSocket() {
   isConnecting = true;
   console.log('Initializing WebSocket connection...');
 
-  // Use wss:// for production, ws:// for local development
-  const wsUrl = process.env.NODE_ENV === 'production' 
-    ? 'wss://your-production-domain.com/ws' 
-    : 'ws://localhost:3000/ws';
-
-  ws = new WebSocket(wsUrl);
+  ws = new WebSocket(process.env.REACT_APP_WS_URL);
 
   ws.onopen = () => {
     console.log('WebSocket connected');
@@ -152,6 +148,14 @@ function handleClipboardMessage(data) {
   console.log('Handling clipboard message:', data);
   
   clipboardManager.setClipboardData(data); // Store data using closure
+
+  // Save received content to history
+  const newItem = {
+    content: data.content.trim(),
+    type: 'received',
+    timestamp: Date.now(),
+  };
+  saveToHistory(newItem);
 
   chrome.notifications.getPermissionLevel((level) => {
     console.log('Notification permission level:', level);
@@ -323,6 +327,15 @@ async function sendClipboardContent(content) {
       if (ws.readyState === WebSocket.OPEN) {
         previousData = { type: 'clipboard', content }; // Store the data to retry
         ws.send(JSON.stringify(previousData));
+        
+        // Save to history
+        const newItem = {
+          content: content.trim(),
+          type: 'sent',
+          timestamp: Date.now(),
+        };
+        await saveToHistory(newItem);
+        
         return { success: true };
       } else {
         throw new Error('WebSocket not in OPEN state after reconnection attempt');
@@ -436,26 +449,33 @@ setInterval(() => {
 }, 30000); // Check every 30 seconds
 
 // Add this listener to handle notification button clicks
-chrome.notifications.onButtonClicked.addListener((notificationId, buttonIndex) => {
-  if (buttonIndex === 0) { // Check if the Copy button was clicked
-    const data = clipboardManager.getClipboardData(); // Get data using closure
-    if (data) {
-      // Send the copyToClipboard message to the active tab's content script
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs[0]) {
-          chrome.tabs.sendMessage(tabs[0].id, { action: 'copyToClipboard', content: data.content }, (response) => {
-            if (response && response.success) {
-              clipboardManager.clearClipboardData(); // Clear clipboard data after copying
-            } else {
-              console.error('Failed to copy content:', response.error);
-            }
-          });
+chrome.notifications.onButtonClicked.addListener(function (notificationId, buttonIndex) {
+    if (buttonIndex === 0) {
+        // Check if the Copy button was clicked
+        var data = clipboardManager.getClipboardData(); // Get data using closure
+        if (data) {
+            // Send the copyToClipboard message to the active tab's content script
+            chrome.tabs.query({
+                active: true,
+                currentWindow: true
+            }, function (tabs) {
+                if (tabs[0]) {
+                    chrome.tabs.sendMessage(tabs[0].id, {
+                        action: 'copyToClipboard',
+                        content: data.content
+                    }, function (response) {
+                        if (response && response.success) {
+                            clipboardManager.clearClipboardData(); // Clear clipboard data after copying
+                        } else {
+                            console.error('Failed to copy content:', response.error);
+                        }
+                    });
+                } else {
+                    console.error('No active tab found to send message');
+                }
+            });
         } else {
-          console.error('No active tab found to send message');
+            console.error('No clipboard data available to copy.');
         }
-      });
-    } else {
-      console.error('No clipboard data available to copy.');
     }
-  }
 });

@@ -1,0 +1,7 @@
+body {
+    min-width: 250px; /* Ensure it doesn't shrink below this width */
+    margin: 0; /* Remove default margin */
+    padding: 0; /* Remove default padding */
+    padding-bottom: 20px; /* Add padding to the bottom */
+    overflow: hidden; /* Prevent scrolling */
+}

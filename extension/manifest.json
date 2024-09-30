@@ -16,8 +16,10 @@
   "host_permissions": [
     "ws://localhost:3000/*",
     "http://localhost:3000/*",
-    "http://localhost:3006/*",
-    "https://*.supabase.co/*"
+    "https://*.supabase.co/*",
+    "https://clipboard.javascriptbit.com/*",
+    "wss://clipboard.javascriptbit.com/*",
+    "http://localhost:8097/"
   ],
   "background": {
     "service_worker": "background.js"
@@ -27,12 +29,13 @@
   },
   "content_scripts": [
     {
-      "matches": [
-        "<all_urls>"
-      ],
+      "matches": ["<all_urls>"],
       "js": ["content.js"]
     }
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval' http://localhost:8097; object-src 'self'"
+  },
   "icons": {
     "16": "icon16.png",
     "48": "icon48.png",
