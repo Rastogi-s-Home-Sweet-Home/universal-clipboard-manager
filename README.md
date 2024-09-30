@@ -1,6 +1,6 @@
 # Universal Clipboard Manager
 
-Universal Clipboard Manager is a real-time, cross-device clipboard synchronization tool. It allows users to share clipboard content seamlessly across multiple devices, enhancing productivity and ease of use.
+Universal Clipboard Manager is a real-time, cross-device clipboard synchronization tool. It allows users to share clipboard content seamlessly across multiple devices, enhancing productivity and ease of use. The project includes both a web application and a Chrome extension for convenient access.
 
 ## Features
 
@@ -10,6 +10,7 @@ Universal Clipboard Manager is a real-time, cross-device clipboard synchronizati
 - Clipboard history tracking
 - WebSocket-based real-time updates
 - Responsive design for various screen sizes
+- Chrome extension for easy access
 
 ## Tech Stack
 
@@ -18,6 +19,7 @@ Universal Clipboard Manager is a real-time, cross-device clipboard synchronizati
 - Database: Supabase
 - Real-time Communication: WebSockets
 - Authentication: Supabase Auth
+- Chrome Extension: React-based popup
 
 ## Getting Started
 
@@ -26,6 +28,7 @@ Universal Clipboard Manager is a real-time, cross-device clipboard synchronizati
 - Node.js (v14 or later)
 - npm
 - Supabase account
+- Google Chrome browser (for the extension)
 
 ### Installation
 
@@ -51,13 +54,41 @@ Universal Clipboard Manager is a real-time, cross-device clipboard synchronizati
    npm run dev
    ```
 
-The server will start on `http://localhost:3000` and the client on `http://localhost:3006`.
+### Chrome Extension Setup
+
+1. Navigate to the extension directory:
+   ```
+   cd extension
+   ```
+
+2. Install extension dependencies:
+   ```
+   npm install
+   ```
+
+3. Build the extension:
+   ```
+   npm run build
+   ```
+
+4. Load the extension in Chrome:
+   - Open Chrome and go to `chrome://extensions`
+   - Enable "Developer mode" in the top right
+   - Click "Load unpacked" and select the `extension/dist` directory
 
 ## Usage
+
+### Web Application
 
 1. Register or log in to your account.
 2. Grant necessary permissions for clipboard access.
 3. Start copying and pasting across your devices!
+
+### Chrome Extension
+
+1. Click on the extension icon in Chrome to open the popup.
+2. Log in with your Universal Clipboard Manager account.
+3. Use the popup interface to send, receive, and manage clipboard content.
 
 ## Deployment
 
@@ -70,6 +101,8 @@ The server will start on `http://localhost:3000` and the client on `http://local
    ```
    npm run start:prod
    ```
+
+3. For the Chrome extension, submit the built package to the Chrome Web Store.
 
 ## Contributing
 
@@ -84,3 +117,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [Supabase](https://supabase.io/) for the backend and authentication services
 - [Tailwind CSS](https://tailwindcss.com/) for the UI components
 - [shadcn/ui](https://ui.shadcn.com/) for additional UI components
+- [Chrome Extension API](https://developer.chrome.com/docs/extensions/) for extension development
