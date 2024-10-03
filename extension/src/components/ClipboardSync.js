@@ -14,23 +14,39 @@ function ClipboardSync() {
     handleCopy,
     handleLogout,
     handleLogin,
+    handleSignUp,  // Add this new handler
     history, // Get history from the hook
     setHistory, // Get setHistory from the hook
   } = useClipboardSync(true);  // true indicates it's the extension version
 
   const [showHistory, setShowHistory] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);  // To toggle between login and sign-up
+
+  const handleSignUpClick = () => {
+    handleSignUp(email, password);
+    // Don't clear the form or change state here
+  };
 
   if (!isAuthenticated) {
     return (
       <div className="container mx-auto px-4 pt-4">
-        <h2 className="text-2xl font-bold mb-4">Login</h2>
-        <input type="email" placeholder="Email" id="email" className="w-full p-2 mb-2 border rounded" />
+        <h2 className="text-2xl font-bold mb-4">{isSignUp ? 'Sign Up' : 'Login'}</h2>
+        <input 
+          type="email" 
+          placeholder="Email" 
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="w-full p-2 mb-2 border rounded" 
+        />
         <div className="relative mb-2">
           <input 
-            type={showPassword ? "text" : "password"} 
+            type={showPassword ? "text" : "password"}
             placeholder="Password" 
-            id="password" 
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
             className="w-full p-2 pr-10 border rounded" 
           />
           <button 
@@ -46,13 +62,16 @@ function ClipboardSync() {
           </button>
         </div>
         <button 
-          onClick={() => handleLogin(
-            document.getElementById('email').value,
-            document.getElementById('password').value
-          )} 
-          className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
+          onClick={() => isSignUp ? handleSignUpClick() : handleLogin(email, password)}
+          className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 mb-2"
         >
-          Login
+          {isSignUp ? 'Sign Up' : 'Login'}
+        </button>
+        <button 
+          onClick={() => setIsSignUp(!isSignUp)}
+          className="w-full bg-gray-200 text-gray-800 p-2 rounded hover:bg-gray-300"
+        >
+          {isSignUp ? 'Already have an account? Login' : 'Need an account? Sign Up'}
         </button>
         <div className="text-sm text-gray-600 mt-2">{status}</div>
       </div>

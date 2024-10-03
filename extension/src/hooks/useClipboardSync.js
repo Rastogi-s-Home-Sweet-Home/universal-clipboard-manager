@@ -23,6 +23,7 @@ export function useClipboardSync(isExtension = false) {
             };
             saveToHistory(newItem);
             setHistory((prev) => [...prev, newItem]); // Update history state
+            setClipboardContent(''); // Clear the input after successful send
           } else {
             setStatus('Error: ' + (response.error || 'Unknown error'));
           }
@@ -32,9 +33,9 @@ export function useClipboardSync(isExtension = false) {
         setStatus('Content sent (client-side)');
       }
     } else {
-      setStatus('Nothing to send');
+      setStatus('Please enter some content to send');
     }
-  }, [clipboardContent, isExtension]);
+  }, [clipboardContent, isExtension, setHistory]);
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(clipboardContent).then(() => {
@@ -92,22 +93,51 @@ export function useClipboardSync(isExtension = false) {
     }
   }, [isExtension]);
 
-  useEffect(() => {
+  const handleSignUp = useCallback((email, password) => {
     if (isExtension) {
-      chrome.runtime.sendMessage({action: 'checkAuth'}, function(response) {
+      chrome.runtime.sendMessage({action: 'signup', email, password}, function(response) {
         if (chrome.runtime.lastError) {
-          setStatus('Error checking auth: ' + chrome.runtime.lastError.message);
-        } else if (response && response.isAuthenticated) {
-          setIsAuthenticated(true);
-          setStatus('Authenticated');
+          setStatus('Sign-up error: ' + chrome.runtime.lastError.message);
+        } else if (response.success) {
+          setStatus(response.message);
+          if (!response.isNewUser) {
+            setIsAuthenticated(true);
+          }
         } else {
-          setIsAuthenticated(false);
-          setStatus('Not authenticated');
+          setStatus('Sign-up failed: ' + (response.error || 'Unknown error'));
         }
       });
     } else {
-      // Client-side auth check logic
+      // Client-side sign-up logic
       // You'll need to implement this based on your client-side setup
+      setStatus('Signed up (client-side)');
+    }
+  }, [isExtension, setIsAuthenticated]);
+
+  useEffect(() => {
+    if (isExtension) {
+      const checkAuthStatus = () => {
+        chrome.runtime.sendMessage({action: 'checkAuth'}, function(response) {
+          if (chrome.runtime.lastError) {
+            console.error('Error checking auth:', chrome.runtime.lastError);
+            setStatus('Error checking auth: ' + chrome.runtime.lastError.message);
+          } else if (response && response.isAuthenticated) {
+            setIsAuthenticated(true);
+            setStatus('Authenticated');
+          } else {
+            setIsAuthenticated(false);
+            setStatus('Not authenticated');
+          }
+        });
+      };
+
+      // Check auth status immediately
+      checkAuthStatus();
+
+      // Set up an interval to check auth status periodically
+      const intervalId = setInterval(checkAuthStatus, 60000); // Check every minute
+
+      return () => clearInterval(intervalId);
     }
   }, [isExtension]);
 
@@ -140,6 +170,7 @@ export function useClipboardSync(isExtension = false) {
     handleCopy,
     handleLogout,
     handleLogin,
+    handleSignUp,
     history, // Return history
     setHistory, // Return setHistory
   };

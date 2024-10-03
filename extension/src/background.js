@@ -9,6 +9,10 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_INTERVAL = 5000; // 5 seconds
 let previousData = null; // Store the last data sent to the WebSocket
 
+// Add these variables at the top of the file
+let currentUser = null;
+let currentSession = null;
+
 // Initialize Supabase client
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
 const supabaseKey = process.env.REACT_APP_SUPABASE_KEY;
@@ -64,14 +68,32 @@ async function refreshSession() {
 
 // Function to check and refresh the session
 async function checkAndRefreshSession() {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (session) {
-    if (new Date(session.expires_at) < new Date()) {
-      return await refreshSession();
+  try {
+    if (!currentSession) {
+      const { data: { session } } = await supabase.auth.getSession();
+      currentSession = session;
     }
-    return true;
+    if (currentSession) {
+      const expiresAt = new Date(currentSession.expires_at);
+      const now = new Date();
+      const fiveMinutesFromNow = new Date(now.getTime() + 5 * 60000);
+
+      if (expiresAt < fiveMinutesFromNow) {
+        console.log('Session expiring soon, refreshing...');
+        const { data, error } = await supabase.auth.refreshSession();
+        if (error) throw error;
+        currentSession = data.session;
+        chrome.storage.local.set({ supabaseSession: currentSession });
+        console.log('Session refreshed successfully');
+      }
+      return true;
+    }
+    console.log('No current session found');
+    return false;
+  } catch (error) {
+    logError('Error refreshing session', error);
+    return false;
   }
-  return false;
 }
 
 // Initialize Supabase and WebSocket on extension load
@@ -99,10 +121,15 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
 // Periodically check and refresh the session
 setInterval(async () => {
+  console.log('Performing periodic session check');
   if (await checkAndRefreshSession()) {
+    console.log('Session is valid');
     if (!ws || ws.readyState === WebSocket.CLOSED) {
+      console.log('WebSocket is closed, reinitializing...');
       initWebSocket();
     }
+  } else {
+    console.log('Session is invalid or expired');
   }
 }, 5 * 60 * 1000); // Check every 5 minutes
 
@@ -141,9 +168,8 @@ function initWebSocket() {
 function handleClipboardMessage(data) {
   console.log('Handling clipboard message:', data);
   
-  clipboardManager.setClipboardData(data); // Store data using closure
+  clipboardManager.setClipboardData(data);
 
-  // Save received content to history
   const newItem = {
     content: data.content.trim(),
     type: 'received',
@@ -151,30 +177,18 @@ function handleClipboardMessage(data) {
   };
   saveToHistory(newItem);
 
-  chrome.notifications.getPermissionLevel((level) => {
-    console.log('Notification permission level:', level);
-    
-    if (level === 'granted') {
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: chrome.runtime.getURL('icon128.png'),
-        title: 'New clipboard content received',
-        message: data.content.substring(0, 50) + (data.content.length > 50 ? '...' : ''),
-        priority: 1,
-        buttons: [
-          { title: 'Copy' } // Only one button
-        ]
-      }, (notificationId) => {
-        if (chrome.runtime.lastError) {
-          console.error('Notification creation failed:', chrome.runtime.lastError);
-          chrome.runtime.sendMessage({ action: 'notifyPermissionDenied' });
-        } else {
-          console.log('Notification created with ID:', notificationId);
-        }
-      });
+  chrome.notifications.create({
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icon128.png'),
+    title: 'New clipboard content received',
+    message: data.content.substring(0, 50) + (data.content.length > 50 ? '...' : ''),
+    priority: 2,
+    buttons: [{ title: 'Copy' }]
+  }, (notificationId) => {
+    if (chrome.runtime.lastError) {
+      logError('Notification creation failed', chrome.runtime.lastError);
     } else {
-      console.log('Notification permission not granted.');
-      chrome.runtime.sendMessage({ action: 'notifyPermissionDenied' });
+      console.log('Notification created with ID:', notificationId);
     }
   });
 }
@@ -250,8 +264,11 @@ function handleWebSocketClose(event) {
 // Function to send authentication message
 async function sendAuthMessage() {
   try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
+    if (!currentSession) {
+      const { data: { session } } = await supabase.auth.getSession();
+      currentSession = session;
+    }
+    if (!currentSession) {
       console.error('No active session');
       return; // Exit if no session
     }
@@ -259,7 +276,7 @@ async function sendAuthMessage() {
     const deviceId = await getDeviceId();
     const authMessage = JSON.stringify({
       type: 'auth',
-      token: session.access_token,
+      token: currentSession.access_token,
       deviceId: deviceId
     });
 
@@ -300,8 +317,11 @@ async function getDeviceId() {
 async function sendClipboardContent(content) {
   try {
     if (await checkAndRefreshSession()) {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
+      if (!currentUser) {
+        const { data: { user } } = await supabase.auth.getUser();
+        currentUser = user;
+      }
+      if (!currentUser) {
         console.error('User not authenticated');
         return { success: false, error: 'User not authenticated' };
       }
@@ -362,6 +382,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       sendResponse({ success: true });
     });
     return true; // Indicates that the response is sent asynchronously
+  } else if (request.action === 'signup') {
+    signup(request.email, request.password).then(sendResponse);
+    return true;  // Indicates we will send a response asynchronously
   }
 });
 
@@ -393,6 +416,8 @@ async function login(email, password) {
     });
     if (error) throw error;
     console.log('Login successful, user:', data.user);
+    currentUser = data.user;
+    currentSession = data.session;
     chrome.storage.local.set({ supabaseSession: data.session });
     await sendAuthMessage(); // Send auth message after login
     initWebSocket();
@@ -412,6 +437,8 @@ async function logout() {
     await supabase.auth.signOut();
     if (ws) ws.close();
     chrome.storage.local.remove('supabaseSession');
+    currentUser = null;
+    currentSession = null;
     return { success: true };
   } catch (error) {
     console.error('Logout error:', error);
@@ -478,9 +505,84 @@ chrome.notifications.onButtonClicked.addListener(function (notificationId, butto
 
 // Add a new function to initialize Supabase and WebSocket
 async function initializeSupabaseAndWebSocket() {
-  const { supabaseSession } = await chrome.storage.local.get('supabaseSession');
-  initSupabase(supabaseSession);
-  if (await checkAndRefreshSession()) {
-    initWebSocket();
+  try {
+    const { supabaseSession } = await chrome.storage.local.get('supabaseSession');
+    initSupabase(supabaseSession);
+    if (await checkAndRefreshSession()) {
+      initWebSocket();
+    } else {
+      console.log('No valid session found during initialization');
+    }
+  } catch (error) {
+    logError('Error initializing Supabase and WebSocket', error);
   }
 }
+
+// Add this function to handle sign-up
+async function signup(email, password) {
+  try {
+    if (!supabase) {
+      console.error('Supabase client not initialized');
+      return { success: false, error: 'Supabase client not initialized' };
+    }
+    const { data, error } = await supabase.auth.signUp({
+      email: email,
+      password: password,
+    });
+    if (error) throw error;
+    
+    if (data.user) {
+      if (data.session) {
+        // User already exists and password is correct, they're now logged in
+        console.log('Existing user logged in:', data.user);
+        chrome.storage.local.set({ supabaseSession: data.session });
+        await sendAuthMessage(); // Send auth message after login
+        initWebSocket();
+        return { success: true, user: data.user, message: 'Logged in successfully', isNewUser: false };
+      } else {
+        // New user, needs to confirm email
+        console.log('Sign-up successful, user:', data.user);
+        return { success: true, user: data.user, message: 'Sign-up successful! Please check your email for confirmation.', isNewUser: true };
+      }
+    } else {
+      // This shouldn't happen, but just in case
+      return { success: false, error: 'An unexpected error occurred' };
+    }
+  } catch (error) {
+    console.error('Sign-up error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Add this function to log errors with more detail
+function logError(message, error) {
+  console.error(`${message}:`, error);
+  console.error('Error stack:', error.stack);
+}
+
+function checkAndRequestNotificationPermission() {
+  chrome.permissions.contains({
+    permissions: ['notifications']
+  }, (result) => {
+    if (result) {
+      console.log('Notification permission already granted');
+    } else {
+      chrome.permissions.request({
+        permissions: ['notifications']
+      }, (granted) => {
+        if (granted) {
+          console.log('Notification permission granted');
+        } else {
+          console.log('Notification permission denied');
+        }
+      });
+    }
+  });
+}
+
+// Call this function when the extension is installed or updated
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === 'install' || details.reason === 'update') {
+    checkAndRequestNotificationPermission();
+  }
+});
