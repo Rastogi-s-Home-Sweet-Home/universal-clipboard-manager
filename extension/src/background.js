@@ -32,13 +32,15 @@ const clipboardManager = (() => {
 
 // Function to initialize Supabase client with a session
 function initSupabase(session) {
-  supabase = createClient(supabaseUrl, supabaseKey, {
-    auth: {
-      autoRefreshToken: true,
-      persistSession: true,
-      detectSessionInUrl: false
-    }
-  });
+  if (!supabase) {
+    supabase = createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: false
+      }
+    });
+  }
   if (session) {
     supabase.auth.setSession(session);
   }
@@ -74,15 +76,7 @@ async function checkAndRefreshSession() {
 
 // Initialize Supabase and WebSocket on extension load
 chrome.runtime.onInstalled.addListener(async (details) => {
-  const { supabaseSession } = await chrome.storage.local.get('supabaseSession');
-  if (supabaseSession) {
-    initSupabase(supabaseSession);
-    if (await checkAndRefreshSession()) {
-      initWebSocket();
-    }
-  } else {
-    initSupabase();
-  }
+  await initializeSupabaseAndWebSocket();
 
   // Request notification permission on install
   if (details.reason === 'install') {
@@ -363,6 +357,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.action === 'sendClipboardContent') {
     sendClipboardContent(request.content).then(sendResponse);
     return true;
+  } else if (request.action === 'initializeExtension') {
+    initializeSupabaseAndWebSocket().then(() => {
+      sendResponse({ success: true });
+    });
+    return true; // Indicates that the response is sent asynchronously
   }
 });
 
@@ -432,11 +431,8 @@ function checkNotificationPermission() {
 
 // Initialize WebSocket connection when the service worker starts
 chrome.runtime.onStartup.addListener(() => {
-  checkAuthStatus().then(({ isAuthenticated }) => {
-    if (isAuthenticated) {
-      initWebSocket();
-    }
-    checkNotificationPermission(); // Check permission on startup
+  initializeSupabaseAndWebSocket().then(() => {
+    checkNotificationPermission();
   });
 });
 
@@ -479,3 +475,12 @@ chrome.notifications.onButtonClicked.addListener(function (notificationId, butto
         }
     }
 });
+
+// Add a new function to initialize Supabase and WebSocket
+async function initializeSupabaseAndWebSocket() {
+  const { supabaseSession } = await chrome.storage.local.get('supabaseSession');
+  initSupabase(supabaseSession);
+  if (await checkAndRefreshSession()) {
+    initWebSocket();
+  }
+}
