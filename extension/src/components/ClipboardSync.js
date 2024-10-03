@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useClipboardSync } from '../hooks/useClipboardSync';
 import ClipboardHistory from './ClipboardHistory';
+// Update the import statement for Heroicons v2
+import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/solid';
 
 function ClipboardSync() {
   const {
@@ -17,13 +19,32 @@ function ClipboardSync() {
   } = useClipboardSync(true);  // true indicates it's the extension version
 
   const [showHistory, setShowHistory] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   if (!isAuthenticated) {
     return (
       <div className="container mx-auto px-4 pt-4">
         <h2 className="text-2xl font-bold mb-4">Login</h2>
         <input type="email" placeholder="Email" id="email" className="w-full p-2 mb-2 border rounded" />
-        <input type="password" placeholder="Password" id="password" className="w-full p-2 mb-2 border rounded" />
+        <div className="relative">
+          <input 
+            type={showPassword ? "text" : "password"} 
+            placeholder="Password" 
+            id="password" 
+            className="w-full p-2 mb-2 border rounded pr-10" 
+          />
+          <button 
+            type="button"
+            className="absolute inset-y-0 right-0 pr-3 flex items-center"
+            onClick={() => setShowPassword(!showPassword)}
+          >
+            {showPassword ? (
+              <EyeSlashIcon className="h-5 w-5 text-gray-400" />
+            ) : (
+              <EyeIcon className="h-5 w-5 text-gray-400" />
+            )}
+          </button>
+        </div>
         <button 
           onClick={() => handleLogin(
             document.getElementById('email').value,

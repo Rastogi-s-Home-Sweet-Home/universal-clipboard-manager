@@ -32,7 +32,7 @@ function App() {
         )}
         <main className="flex-grow flex justify-center p-4">
           <div className="w-full max-w-md">
-            {isAuthenticated ? <ClipboardSync /> : <AuthForm />}
+            {isAuthenticated ? <ClipboardSync /> : <AuthForm onAuthStateChange={setIsAuthenticated} />}
           </div>
         </main>
         <footer className="bg-secondary text-secondary-foreground p-4 text-center">

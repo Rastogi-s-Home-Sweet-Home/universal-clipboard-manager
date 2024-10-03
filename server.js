@@ -69,18 +69,10 @@ const supabase = createClient(
   }
 );
 
-wss.on('connection', async (ws, request) => {
-  console.log('New WebSocket connection attempt');
-
+wss.on('connection', (ws) => {
   let authenticated = false;
   let userId = null;
   let deviceId = null;
-
-  const heartbeat = setInterval(() => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.ping();
-    }
-  }, 30000); // Send a ping every 30 seconds
 
   ws.on('message', async (message) => {
     console.log('Received message:', message.toString());
@@ -89,8 +81,10 @@ wss.on('connection', async (ws, request) => {
       if (data.type === 'auth') {
         // Handle authentication
         try {
-          const decoded = jwt.verify(data.token, process.env.SUPABASE_JWT_SECRET);
-          userId = decoded.sub;
+          const { data: { user }, error } = await supabase.auth.getUser(data.token);
+          if (error) throw error;
+          
+          userId = user.id;
           deviceId = data.deviceId;
           authenticated = true;
           console.log('User authenticated:', userId);
@@ -152,7 +146,6 @@ wss.on('connection', async (ws, request) => {
   });
 
   ws.on('close', async () => {
-    clearInterval(heartbeat);
     if (authenticated && userId) {
       console.log('WebSocket connection closed for user:', userId);
       // Update device status to offline

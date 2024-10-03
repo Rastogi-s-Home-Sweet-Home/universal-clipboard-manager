@@ -84,8 +84,8 @@ export const WebSocketProvider = ({ children }) => {
             return wsRef.current;
         } catch (error) {
             console.error('Error connecting to WebSocket:', error);
-            isConnectingRef.current = false;
             setWsStatus('error');
+            isConnectingRef.current = false;
         }
     }, []);
 
