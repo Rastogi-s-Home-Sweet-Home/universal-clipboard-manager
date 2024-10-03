@@ -17,6 +17,11 @@ let currentSession = null;
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
 const supabaseKey = process.env.REACT_APP_SUPABASE_KEY;
 
+// Add this function near the top of the file, after the imports
+function epochToMs(epochSeconds) {
+  return epochSeconds * 1000;
+}
+
 // Closure to manage clipboard data
 const clipboardManager = (() => {
   let clipboardData = null; // Private variable
@@ -75,9 +80,13 @@ async function checkAndRefreshSession() {
       currentSession = session;
     }
     if (currentSession) {
-      const expiresAt = new Date(currentSession.expires_at);
+      const expiresAt = new Date(epochToMs(currentSession.expires_at));
       const now = new Date();
       const fiveMinutesFromNow = new Date(now.getTime() + 5 * 60000);
+
+      console.log('Current time:', now.toISOString());
+      console.log('Session expires at:', expiresAt.toISOString());
+      console.log('Five minutes from now:', fiveMinutesFromNow.toISOString());
 
       if (expiresAt < fiveMinutesFromNow) {
         console.log('Session expiring soon, refreshing...');
@@ -396,6 +405,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 async function initializeSupabaseAndWebSocket() {
   try {
     const { supabaseSession } = await chrome.storage.local.get('supabaseSession');
+    if (supabaseSession) {
+      console.log('Stored session expires at:', new Date(epochToMs(supabaseSession.expires_at)).toISOString());
+    }
     await initSupabase(supabaseSession);
     if (await checkAndRefreshSession()) {
       initWebSocket();
@@ -436,7 +448,9 @@ async function login(email, password) {
     console.log('Login successful, user:', data.user);
     currentUser = data.user;
     currentSession = data.session;
-    chrome.storage.local.set({ supabaseSession: data.session });
+    // Ensure we're storing the correct expiration time
+    console.log('Session expires at:', new Date(epochToMs(currentSession.expires_at)).toISOString());
+    chrome.storage.local.set({ supabaseSession: currentSession });
     await sendAuthMessage(); // Send auth message after login
     initWebSocket();
     return { success: true, user: data.user };
@@ -538,7 +552,9 @@ async function signup(email, password) {
       if (data.session) {
         // User already exists and password is correct, they're now logged in
         console.log('Existing user logged in:', data.user);
-        chrome.storage.local.set({ supabaseSession: data.session });
+        currentSession = data.session;
+        console.log('Session expires at:', new Date(epochToMs(currentSession.expires_at)).toISOString());
+        chrome.storage.local.set({ supabaseSession: currentSession });
         await sendAuthMessage(); // Send auth message after login
         initWebSocket();
         return { success: true, user: data.user, message: 'Logged in successfully', isNewUser: false };
