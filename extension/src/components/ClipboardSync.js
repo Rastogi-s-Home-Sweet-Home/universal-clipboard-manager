@@ -25,48 +25,65 @@ function ClipboardSync() {
   const [password, setPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);  // To toggle between login and sign-up
 
-  const handleSignUpClick = () => {
-    handleSignUp(email, password);
-    // Don't clear the form or change state here
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (isSignUp) {
+      handleSignUp(email, password);
+    } else {
+      handleLogin(email, password);
+    }
+  };
+
+  const togglePasswordVisibility = () => {
+    setShowPassword(!showPassword);
   };
 
   if (!isAuthenticated) {
     return (
       <div className="container mx-auto px-4 pt-4">
         <h2 className="text-2xl font-bold mb-4">{isSignUp ? 'Sign Up' : 'Login'}</h2>
-        <input 
-          type="email" 
-          placeholder="Email" 
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="w-full p-2 mb-2 border rounded" 
-        />
-        <div className="relative mb-2">
-          <input 
-            type={showPassword ? "text" : "password"}
-            placeholder="Password" 
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full p-2 pr-10 border rounded" 
-          />
+        <form onSubmit={handleSubmit}>
+          <div className="mb-4">
+            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input 
+              id="email"
+              type="email" 
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full p-2 border rounded" 
+              required
+            />
+          </div>
+          <div className="mb-4 relative">
+            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <input 
+              id="password"
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full p-2 pr-10 border rounded" 
+              required
+            />
+            <button 
+              type="button"
+              className="absolute right-2 top-8 transform -translate-y-1/2 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-600 focus:outline-none"
+              onClick={togglePasswordVisibility}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+            >
+              {showPassword ? (
+                <EyeSlashIcon className="h-5 w-5" />
+              ) : (
+                <EyeIcon className="h-5 w-5" />
+              )}
+            </button>
+          </div>
           <button 
-            type="button"
-            className="absolute right-2 top-1/2 transform -translate-y-1/2 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-600 focus:outline-none"
-            onClick={() => setShowPassword(!showPassword)}
+            type="submit"
+            className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 mb-2"
           >
-            {showPassword ? (
-              <EyeSlashIcon className="h-5 w-5" />
-            ) : (
-              <EyeIcon className="h-5 w-5" />
-            )}
+            {isSignUp ? 'Sign Up' : 'Login'}
           </button>
-        </div>
-        <button 
-          onClick={() => isSignUp ? handleSignUpClick() : handleLogin(email, password)}
-          className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 mb-2"
-        >
-          {isSignUp ? 'Sign Up' : 'Login'}
-        </button>
+        </form>
         <button 
           onClick={() => setIsSignUp(!isSignUp)}
           className="w-full bg-gray-200 text-gray-800 p-2 rounded hover:bg-gray-300"
