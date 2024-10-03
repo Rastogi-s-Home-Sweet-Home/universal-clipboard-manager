@@ -26,22 +26,22 @@ function ClipboardSync() {
       <div className="container mx-auto px-4 pt-4">
         <h2 className="text-2xl font-bold mb-4">Login</h2>
         <input type="email" placeholder="Email" id="email" className="w-full p-2 mb-2 border rounded" />
-        <div className="relative">
+        <div className="relative mb-2">
           <input 
             type={showPassword ? "text" : "password"} 
             placeholder="Password" 
             id="password" 
-            className="w-full p-2 mb-2 border rounded pr-10" 
+            className="w-full p-2 pr-10 border rounded" 
           />
           <button 
             type="button"
-            className="absolute inset-y-0 right-0 pr-3 flex items-center"
+            className="absolute right-2 top-1/2 transform -translate-y-1/2 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-600 focus:outline-none"
             onClick={() => setShowPassword(!showPassword)}
           >
             {showPassword ? (
-              <EyeSlashIcon className="h-5 w-5 text-gray-400" />
+              <EyeSlashIcon className="h-5 w-5" />
             ) : (
-              <EyeIcon className="h-5 w-5 text-gray-400" />
+              <EyeIcon className="h-5 w-5" />
             )}
           </button>
         </div>
