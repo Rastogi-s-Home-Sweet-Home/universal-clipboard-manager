@@ -34,8 +34,8 @@ const clipboardManager = (() => {
   };
 })();
 
-// Function to initialize Supabase client with a session
-function initSupabase(session) {
+// Modify the initSupabase function
+async function initSupabase(session) {
   if (!supabase) {
     supabase = createClient(supabaseUrl, supabaseKey, {
       auth: {
@@ -46,8 +46,9 @@ function initSupabase(session) {
     });
   }
   if (session) {
-    supabase.auth.setSession(session);
+    await supabase.auth.setSession(session);
   }
+  return supabase;
 }
 
 // Function to refresh the session
@@ -261,9 +262,12 @@ function handleWebSocketClose(event) {
   }
 }
 
-// Function to send authentication message
+// Modify the sendAuthMessage function
 async function sendAuthMessage() {
   try {
+    if (!supabase) {
+      await initSupabase();
+    }
     if (!currentSession) {
       const { data: { session } } = await supabase.auth.getSession();
       currentSession = session;
@@ -388,11 +392,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
+// Modify the initializeSupabaseAndWebSocket function
+async function initializeSupabaseAndWebSocket() {
+  try {
+    const { supabaseSession } = await chrome.storage.local.get('supabaseSession');
+    await initSupabase(supabaseSession);
+    if (await checkAndRefreshSession()) {
+      initWebSocket();
+    } else {
+      console.log('No valid session found during initialization');
+    }
+  } catch (error) {
+    logError('Error initializing Supabase and WebSocket', error);
+  }
+}
+
+// Modify other functions that use supabase to ensure it's initialized
 async function checkAuthStatus() {
   try {
     if (!supabase) {
-      console.error('Supabase client not initialized');
-      return { isAuthenticated: false, error: 'Supabase client not initialized' };
+      await initSupabase();
     }
     const { data, error } = await supabase.auth.getSession();
     if (error) throw error;
@@ -407,8 +426,7 @@ async function checkAuthStatus() {
 async function login(email, password) {
   try {
     if (!supabase) {
-      console.error('Supabase client not initialized');
-      return { success: false, error: 'Supabase client not initialized' };
+      await initSupabase();
     }
     const { data, error } = await supabase.auth.signInWithPassword({
       email: email,
@@ -502,21 +520,6 @@ chrome.notifications.onButtonClicked.addListener(function (notificationId, butto
         }
     }
 });
-
-// Add a new function to initialize Supabase and WebSocket
-async function initializeSupabaseAndWebSocket() {
-  try {
-    const { supabaseSession } = await chrome.storage.local.get('supabaseSession');
-    initSupabase(supabaseSession);
-    if (await checkAndRefreshSession()) {
-      initWebSocket();
-    } else {
-      console.log('No valid session found during initialization');
-    }
-  } catch (error) {
-    logError('Error initializing Supabase and WebSocket', error);
-  }
-}
 
 // Add this function to handle sign-up
 async function signup(email, password) {
