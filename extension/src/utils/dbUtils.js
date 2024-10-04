@@ -3,16 +3,23 @@ export const openDatabase = () => {
     const request = indexedDB.open('ClipboardHistoryDB', 1);
 
     request.onerror = (event) => {
+      console.error('Database error:', event.target.error);
       reject('Error opening database');
     };
 
     request.onsuccess = (event) => {
-      resolve(event.target.result);
+      // The result is an instance of IDBDatabase
+      const db = event.target.result;
+      resolve(db);
     };
 
     request.onupgradeneeded = (event) => {
+      // The result is an instance of IDBDatabase
       const db = event.target.result;
-      db.createObjectStore('clipboardHistory', { keyPath: 'id', autoIncrement: true });
+      // Create object store if it doesn't exist
+      if (!db.objectStoreNames.contains('clipboardHistory')) {
+        db.createObjectStore('clipboardHistory', { keyPath: 'id', autoIncrement: true });
+      }
     };
   });
 };
