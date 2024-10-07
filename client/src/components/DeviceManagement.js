@@ -1,78 +1,17 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { XMarkIcon } from '@heroicons/react/24/solid';
-import { getDeviceName } from '../utils/deviceUtils';
 import { useWebSocket } from '../context/WebSocketContext'; // Import the context
 import { useToast } from './ui/toast'; // Import the toast hook
 
-function DeviceManagement({ isOpen, onClose }) {
+function DeviceManagement({ isOpen, onClose, devices, onDevicesUpdated, isLoading }) {
   const { addToast } = useToast(); // Initialize the toast
-  const [devices, setDevices] = useState([]);
   const [editingDevice, setEditingDevice] = useState(null);
   const [newName, setNewName] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
   const currentDeviceId = localStorage.getItem('deviceId'); // Get the current device ID
   const wsRef = useWebSocket(); // Use the context
-
-  const fetchDevices = useCallback(async () => {
-    if (!isOpen) return;
-    setIsLoading(true);
-    try {
-      console.log('Fetching devices...');
-      const { data, error } = await supabase
-        .from('devices')
-        .select('*')
-        .order('last_active', { ascending: false });
-
-      if (error) throw error;
-      console.log('Fetched devices:', data);
-
-      const currentDeviceExists = data.some(device => device.id === currentDeviceId);
-      console.log('Current device exists:', currentDeviceExists);
-
-      if (!currentDeviceExists) {
-        console.log('Current device not found, adding it...');
-        const { data: userData } = await supabase.auth.getUser();
-        const deviceName = getDeviceName();
-
-        const { error: insertError } = await supabase
-          .from('devices')
-          .insert({
-            id: currentDeviceId,
-            name: deviceName,
-            user_id: userData.user.id,
-            is_online: true,
-            last_active: new Date().toISOString()
-          })
-          .onConflict('id') // Handle conflict by updating the existing record
-          .upsert(); // Use upsert to avoid duplicates
-
-        if (insertError) {
-          if (insertError.code === '23505') { // Duplicate key error code
-            addToast({ title: 'Error', description: 'This device is already registered.', variant: 'destructive', id: Date.now() }); // User-friendly message
-          } else {
-            console.error('Error inserting device:', insertError);
-            addToast({ title: 'Error', description: 'Failed to add device. Please try again.', variant: 'destructive', id: Date.now() });
-          }
-          throw insertError; // Handle insertion error
-        }
-      }
-
-      setDevices(data);
-    } catch (error) {
-      console.error('Error fetching devices:', error);
-      addToast({ title: 'Error', description: 'Failed to fetch devices. Please try again.', variant: 'destructive', id: Date.now() }); // Replace alert with toast
-    } finally {
-      setIsLoading(false);
-    }
-  }, [isOpen, currentDeviceId, addToast]);
-
-  useEffect(() => {
-    console.log('DeviceManagement component mounted or isOpen changed');
-    fetchDevices();
-  }, [fetchDevices]);
 
   const handleDelete = async (id) => {
     try {
@@ -84,15 +23,14 @@ function DeviceManagement({ isOpen, onClose }) {
       if (error) throw error;
 
       if (id === currentDeviceId) {
-        // Do not remove deviceId from localStorage
-        await supabase.auth.signOut(); // Log out the user
-        window.location.reload(); // Reload the page
+        await supabase.auth.signOut();
+        window.location.reload();
       } else {
-        fetchDevices(); // Refresh the device list
+        onDevicesUpdated(); // Call this instead of fetchDevices
       }
     } catch (error) {
       console.error('Error deleting device:', error);
-      addToast({ title: 'Error', description: 'Failed to delete device. Please try again.', variant: 'destructive', id: Date.now() }); // Replace alert with toast
+      addToast({ title: 'Error', description: 'Failed to delete device. Please try again.', variant: 'destructive', id: Date.now() });
     }
   };
 
@@ -112,7 +50,7 @@ function DeviceManagement({ isOpen, onClose }) {
 
       if (error) throw error;
       setEditingDevice(null);
-      fetchDevices();
+      onDevicesUpdated();
     } catch (error) {
       console.error('Error updating device:', error);
       addToast({ title: 'Error', description: 'Failed to update device. Please try again.', variant: 'destructive', id: Date.now() }); // Replace alert with toast
@@ -138,7 +76,7 @@ function DeviceManagement({ isOpen, onClose }) {
         }
         window.location.reload(); // Reload the page
       } else {
-        fetchDevices(); // Refresh the device list
+        onDevicesUpdated(); // Call this instead of fetchDevices
       }
     } catch (error) {
       console.error('Error logging out device:', error);

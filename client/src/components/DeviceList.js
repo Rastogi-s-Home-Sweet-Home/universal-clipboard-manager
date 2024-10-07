@@ -1,50 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { supabase } from '../supabaseClient';
+import React from 'react';
 import { DevicePhoneMobileIcon, ComputerDesktopIcon, GlobeAltIcon } from '@heroicons/react/24/solid';
 
-function DeviceList() {
-  const [devices, setDevices] = useState([]);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const currentDeviceId = localStorage.getItem('deviceId');
-
-  const fetchDevices = useCallback(async () => {
-    setIsRefreshing(true);
-    try {
-      const { data, error } = await supabase
-        .from('devices')
-        .select('*')
-        .order('last_active', { ascending: false });
-
-      if (error) throw error;
-      setDevices(data);
-    } catch (error) {
-      console.error('Error fetching devices:', error);
-    } finally {
-      setIsRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchDevices();
-
-    const handleVisibilityChange = () => {
-      if (!document.hidden) {
-        fetchDevices();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    const subscription = supabase
-      .channel('device_updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'devices' }, fetchDevices)
-      .subscribe();
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      subscription.unsubscribe();
-    };
-  }, [fetchDevices]);
-
+function DeviceList({ devices, currentDeviceId, isRefreshing }) {
   const getDeviceIcon = (deviceName) => {
     if (deviceName.includes('Mobile') || deviceName.includes('iOS') || deviceName.includes('Tablet')) {
       return <DevicePhoneMobileIcon className="h-5 w-5" />;
