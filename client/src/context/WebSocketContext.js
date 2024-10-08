@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useRef, useState, useCallback, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
+import { getDeviceName } from '../utils/deviceUtils';
 
 const WebSocketContext = createContext();
 
@@ -8,6 +9,20 @@ export const WebSocketProvider = ({ children }) => {
     const wsRef = useRef(null);
     const reconnectTimeoutRef = useRef(null);
     const isConnectingRef = useRef(false);
+
+    const sendAuthMessage = useCallback((token, deviceId) => {
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            const authMessage = JSON.stringify({
+                type: 'auth',
+                token: token,
+                deviceId: deviceId,
+                deviceName: getDeviceName(),
+            });
+            wsRef.current.send(authMessage);
+        } else {
+            console.error('WebSocket is not open. Unable to send auth message.');
+        }
+    }, []);
 
     const connect = useCallback(async () => {
         if (isConnectingRef.current) {
@@ -87,20 +102,7 @@ export const WebSocketProvider = ({ children }) => {
             setWsStatus('error');
             isConnectingRef.current = false;
         }
-    }, []);
-
-    const sendAuthMessage = useCallback((token, deviceId) => {
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            const authMessage = JSON.stringify({
-                type: 'auth',
-                token: token,
-                deviceId: deviceId
-            });
-            wsRef.current.send(authMessage);
-        } else {
-            console.error('WebSocket is not open. Unable to send auth message.');
-        }
-    }, []);
+    }, [sendAuthMessage]);
 
     const disconnect = useCallback(() => {
         if (wsRef.current) {

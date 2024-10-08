@@ -93,6 +93,7 @@ wss.on('connection', (ws) => {
           // Update device status to online
           if (deviceId) {
             console.log('Updating device status:', deviceId);
+            const deviceName = data.deviceName || 'Unknown Device'; // Provide a default name if not provided
             const { error } = await supabase
               .from('devices')
               .upsert({ 
@@ -100,7 +101,7 @@ wss.on('connection', (ws) => {
                 user_id: userId, 
                 is_online: true, 
                 last_active: new Date().toISOString(),
-                name: 'Chrome Extension' // Add a default name for the extension
+                name: deviceName
               }, { onConflict: 'id' });
             
             if (error) {
