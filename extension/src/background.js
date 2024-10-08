@@ -1,15 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 import { saveToHistory } from './utils/dbUtils';
+import { initWebSocket, sendMessage, closeWebSocket, getWebSocketState } from './services/webSocketService';
+import { getOrCreateDeviceId } from '../../client/src/utils/deviceUtils';
 
-let ws = null;
-let isConnecting = false;
 let supabase;
-let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 5;
-const RECONNECT_INTERVAL = 5000; // 5 seconds
-let previousData = null; // Store the last data sent to the WebSocket
-
-// Add these variables at the top of the file
 let currentUser = null;
 let currentSession = null;
 
@@ -17,7 +11,6 @@ let currentSession = null;
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
 const supabaseKey = process.env.REACT_APP_SUPABASE_KEY;
 
-// Add this function near the top of the file, after the imports
 function epochToMs(epochSeconds) {
   return epochSeconds * 1000;
 }
@@ -134,45 +127,14 @@ setInterval(async () => {
   console.log('Performing periodic session check');
   if (await checkAndRefreshSession()) {
     console.log('Session is valid');
-    if (!ws || ws.readyState === WebSocket.CLOSED) {
+    if (getWebSocketState() === WebSocket.CLOSED) {
       console.log('WebSocket is closed, reinitializing...');
-      initWebSocket();
+      initializeWebSocketConnection();
     }
   } else {
     console.log('Session is invalid or expired');
   }
 }, 5 * 60 * 1000); // Check every 5 minutes
-
-// Function to initialize WebSocket connection
-function initWebSocket() {
-  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
-    console.log('WebSocket is already connected or connecting');
-    return;
-  }
-
-  if (isConnecting) {
-    console.log('WebSocket connection attempt already in progress');
-    return;
-  }
-
-  isConnecting = true;
-  console.log('Initializing WebSocket connection...');
-
-  ws = new WebSocket(process.env.REACT_APP_WS_URL);
-
-  ws.onopen = () => {
-    console.log('WebSocket connected');
-    isConnecting = false;
-    reconnectAttempts = 0;
-    sendAuthMessage();
-  };
-
-  ws.onmessage = handleWebSocketMessage;
-  ws.onerror = handleWebSocketError;
-  ws.onclose = handleWebSocketClose;
-
-  console.log('WebSocket initial state:', ws.readyState);
-}
 
 // Function to handle clipboard messages
 function handleClipboardMessage(data) {
@@ -203,31 +165,6 @@ function handleClipboardMessage(data) {
   });
 }
 
-function handleWebSocketMessage(event) {
-  console.log('Received:', event.data);
-  try {
-    const data = JSON.parse(event.data);
-    if (data.type === 'clipboard') {
-      handleClipboardMessage(data);
-    } else if (data.type === 'auth_success') {
-      console.log('Authentication successful');
-      previousData = null; // Clear previous data on successful auth
-    } else if (data.type === 'auth_error') {
-      console.error('Authentication failed:', data.error);
-      if (data.error === 'Not authenticated') {
-        console.log('Retrying authentication...');
-        sendAuthMessage(); // Retry sending auth message
-        if (previousData) {
-          console.log('Retrying previous data:', previousData);
-          ws.send(JSON.stringify(previousData)); // Retry sending previous data
-        }
-      }
-    }
-  } catch (error) {
-    console.error('Error parsing message:', error);
-  }
-}
-
 function sendMessageToTab(tabId, message) {
   chrome.tabs.sendMessage(tabId, message, function(response) {
     if (chrome.runtime.lastError) {
@@ -254,76 +191,14 @@ function injectContentScriptAndRetry(tabId, message) {
 
 function handleWebSocketError(error) {
   console.error('WebSocket error:', error);
-  isConnecting = false;
+  // You might want to implement some error handling logic here
+  // For example, you could try to reconnect or notify the user
 }
 
 function handleWebSocketClose(event) {
   console.log('WebSocket disconnected:', event.code, event.reason);
-  isConnecting = false;
-  ws = null;
-
-  if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-    reconnectAttempts++;
-    console.log(`Attempting to reconnect (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-    setTimeout(initWebSocket, RECONNECT_INTERVAL * reconnectAttempts);
-  } else {
-    console.error('Max reconnection attempts reached');
-  }
-}
-
-// Modify the sendAuthMessage function
-async function sendAuthMessage() {
-  try {
-    if (!supabase) {
-      await initSupabase();
-    }
-    if (!currentSession) {
-      const { data: { session } } = await supabase.auth.getSession();
-      currentSession = session;
-    }
-    if (!currentSession) {
-      console.error('No active session');
-      return; // Exit if no session
-    }
-
-    const deviceId = await getDeviceId();
-    const authMessage = JSON.stringify({
-      type: 'auth',
-      token: currentSession.access_token,
-      deviceId: deviceId
-    });
-
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(authMessage);
-      console.log('Auth message sent:', authMessage);
-    } else {
-      console.error('WebSocket is not open. Unable to send auth message.');
-    }
-  } catch (error) {
-    console.error('Error sending auth message:', error);
-  }
-}
-
-function generateUUID() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-}
-
-async function getDeviceId() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(['deviceId'], function(result) {
-      if (result.deviceId && result.deviceId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)) {
-        resolve(result.deviceId);
-      } else {
-        const newDeviceId = generateUUID();
-        chrome.storage.local.set({ deviceId: newDeviceId }, function() {
-          resolve(newDeviceId);
-        });
-      }
-    });
-  });
+  // You might want to implement some reconnection logic here
+  // For example, you could try to reconnect after a delay
 }
 
 // Function to send clipboard content to the server via WebSocket
@@ -338,22 +213,24 @@ async function sendClipboardContent(content) {
         console.error('User not authenticated');
         return { success: false, error: 'User not authenticated' };
       }
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
+      if (getWebSocketState() !== WebSocket.OPEN) {
         console.log('WebSocket not open, attempting to reconnect...');
         await new Promise((resolve, reject) => {
-          initWebSocket();
+          initializeWebSocketConnection();
           const timeout = setTimeout(() => {
             reject(new Error('WebSocket connection timeout'));
           }, 10000); // 10 seconds timeout
-          ws.onopen = () => {
-            clearTimeout(timeout);
-            resolve();
-          };
+          const checkOpen = setInterval(() => {
+            if (getWebSocketState() === WebSocket.OPEN) {
+              clearTimeout(timeout);
+              clearInterval(checkOpen);
+              resolve();
+            }
+          }, 100);
         });
       }
-      if (ws.readyState === WebSocket.OPEN) {
-        previousData = { type: 'clipboard', content }; // Store the data to retry
-        ws.send(JSON.stringify(previousData));
+      if (getWebSocketState() === WebSocket.OPEN) {
+        sendMessage({ type: 'clipboard', content });
         
         // Save to history
         const newItem = {
@@ -410,7 +287,7 @@ async function initializeSupabaseAndWebSocket() {
     }
     await initSupabase(supabaseSession);
     if (await checkAndRefreshSession()) {
-      initWebSocket();
+      initializeWebSocketConnection();
     } else {
       console.log('No valid session found during initialization');
     }
@@ -448,11 +325,9 @@ async function login(email, password) {
     console.log('Login successful, user:', data.user);
     currentUser = data.user;
     currentSession = data.session;
-    // Ensure we're storing the correct expiration time
     console.log('Session expires at:', new Date(epochToMs(currentSession.expires_at)).toISOString());
     chrome.storage.local.set({ supabaseSession: currentSession });
-    await sendAuthMessage(); // Send auth message after login
-    initWebSocket();
+    initializeWebSocketConnection();
     return { success: true, user: data.user };
   } catch (error) {
     console.error('Login error:', error);
@@ -467,7 +342,7 @@ async function logout() {
       return { success: false, error: 'Supabase client not initialized' };
     }
     await supabase.auth.signOut();
-    if (ws) ws.close();
+    closeWebSocket();
     chrome.storage.local.remove('supabaseSession');
     currentUser = null;
     currentSession = null;
@@ -497,9 +372,9 @@ chrome.runtime.onStartup.addListener(() => {
 
 // Set up periodic WebSocket status check
 setInterval(() => {
-  if (!ws || ws.readyState === WebSocket.CLOSED) {
+  if (getWebSocketState() === WebSocket.CLOSED) {
     console.log('WebSocket is not connected. Attempting to reconnect...');
-    initWebSocket();
+    initializeWebSocketConnection();
   }
 }, 30000); // Check every 30 seconds
 
@@ -555,8 +430,7 @@ async function signup(email, password) {
         currentSession = data.session;
         console.log('Session expires at:', new Date(epochToMs(currentSession.expires_at)).toISOString());
         chrome.storage.local.set({ supabaseSession: currentSession });
-        await sendAuthMessage(); // Send auth message after login
-        initWebSocket();
+        initializeWebSocketConnection();
         return { success: true, user: data.user, message: 'Logged in successfully', isNewUser: false };
       } else {
         // New user, needs to confirm email
@@ -605,3 +479,36 @@ chrome.runtime.onInstalled.addListener((details) => {
     checkAndRequestNotificationPermission();
   }
 });
+
+function initializeWebSocketConnection() {
+  initWebSocket({
+    wsUrl: process.env.REACT_APP_WS_URL,
+    getAuthMessage: () => ({
+      type: 'auth',
+      token: currentSession.access_token,
+      deviceId: getOrCreateDeviceId(),
+      deviceName: "Chrome Extension",
+    }),
+    onOpen: () => {
+      console.log('WebSocket authenticated successfully');
+    },
+    onMessage: (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'clipboard') {
+          handleClipboardMessage(data);
+        } else if (data.type === 'auth_success') {
+          console.log('Authentication successful');
+        } else if (data.type === 'auth_error') {
+          console.error('Authentication failed:', data.error);
+        } else {
+          console.log('Received other message:', data);
+        }
+      } catch (error) {
+        console.error('Error parsing message:', error);
+      }
+    },
+    onError: handleWebSocketError,
+    onClose: handleWebSocketClose
+  });
+}
