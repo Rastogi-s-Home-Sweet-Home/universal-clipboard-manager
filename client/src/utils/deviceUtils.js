@@ -1,3 +1,5 @@
+import { v4 as uuidv4 } from 'uuid';
+
 export function getDeviceName() {
   const ua = navigator.userAgent;
   let deviceName = 'Unknown Device';
@@ -35,4 +37,13 @@ export function getDeviceName() {
   }
 
   return deviceName;
+}
+
+export function getOrCreateDeviceId() {
+  let deviceId = localStorage.getItem('deviceId');
+  if (!deviceId) {
+    deviceId = uuidv4();
+    localStorage.setItem('deviceId', deviceId);
+  }
+  return deviceId;
 }
