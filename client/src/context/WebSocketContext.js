@@ -133,17 +133,45 @@ export const WebSocketProvider = ({ children }) => {
     };
 
     wsRef.current.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'auth_success') {
-        console.log('Authentication successful');
-        setWsStatus('authenticated');
-        resetRetryParams();
-      } else if (data.type === 'auth_error') {
-        console.error('Authentication failed:', data.error);
-        setWsStatus('authentication_failed');
-        retryAuth();
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'auth_success') {
+          console.log('Authentication successful');
+          setWsStatus('authenticated');
+          resetRetryParams();
+        } else if (data.type === 'auth_error') {
+          console.error('Authentication failed:', data.error);
+          setWsStatus('authentication_failed');
+          retryAuth();
+        } else if (data.type === 'clipboard') {
+          // Broadcast the message to all subscribers
+          const messageEvent = new CustomEvent('websocket-message', {
+            detail: {
+              type: 'clipboard',
+              content: data.content,
+              contentId: data.contentId,
+              deviceId: data.deviceId
+            }
+          });
+          window.dispatchEvent(messageEvent);
+        } else if (data.type === 'receipt') {
+          // Broadcast receipt messages
+          const messageEvent = new CustomEvent('websocket-message', {
+            detail: {
+              type: 'receipt',
+              contentId: data.contentId,
+              deviceId: data.deviceId
+            }
+          });
+          window.dispatchEvent(messageEvent);
+        } else if (data.type === 'pong') {
+          console.log('Received pong from server');
+        } else {
+          console.log('Received unhandled message type:', data.type);
+        }
+      } catch (error) {
+        console.error('Error parsing WebSocket message:', error);
       }
-      // Handle other message types...
     };
 
     wsRef.current.onerror = (error) => {

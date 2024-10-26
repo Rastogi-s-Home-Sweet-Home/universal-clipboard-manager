@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { saveToHistory } from './utils/dbUtils';
 import { initWebSocket, sendMessage, closeWebSocket, getWebSocketState } from './services/webSocketService';
-import { getOrCreateDeviceId } from '../../client/src/utils/deviceUtils';
+import { getOrCreateDeviceId, getDeviceName } from './utils/deviceUtils';
 
 let supabase;
 let currentUser = null;
@@ -213,13 +213,21 @@ async function sendClipboardContent(content) {
         console.error('User not authenticated');
         return { success: false, error: 'User not authenticated' };
       }
+
+      const deviceId = await getOrCreateDeviceId();
+      console.log('Sending clipboard content with deviceId:', deviceId); // Debug log
+
+      if (!deviceId) {
+        throw new Error('DeviceId not available');
+      }
+
       if (getWebSocketState() !== WebSocket.OPEN) {
         console.log('WebSocket not open, attempting to reconnect...');
         await new Promise((resolve, reject) => {
           initializeWebSocketConnection();
           const timeout = setTimeout(() => {
             reject(new Error('WebSocket connection timeout'));
-          }, 10000); // 10 seconds timeout
+          }, 10000);
           const checkOpen = setInterval(() => {
             if (getWebSocketState() === WebSocket.OPEN) {
               clearTimeout(timeout);
@@ -229,14 +237,22 @@ async function sendClipboardContent(content) {
           }, 100);
         });
       }
+
       if (getWebSocketState() === WebSocket.OPEN) {
-        sendMessage({ type: 'clipboard', content });
+        const contentId = Date.now().toString();
+        sendMessage({ 
+          type: 'clipboard', 
+          content,
+          contentId,
+          deviceId
+        });
         
-        // Save to history
         const newItem = {
           content: content.trim(),
           type: 'sent',
           timestamp: Date.now(),
+          contentId,
+          deviceId // Include deviceId in history
         };
         await saveToHistory(newItem);
         
@@ -480,35 +496,61 @@ chrome.runtime.onInstalled.addListener((details) => {
   }
 });
 
-function initializeWebSocketConnection() {
-  initWebSocket({
-    wsUrl: process.env.REACT_APP_WS_URL,
-    getAuthMessage: () => ({
-      type: 'auth',
-      token: currentSession.access_token,
-      deviceId: getOrCreateDeviceId(),
-      deviceName: "Chrome Extension",
-    }),
-    onOpen: () => {
-      console.log('WebSocket authenticated successfully');
-    },
-    onMessage: (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'clipboard') {
-          handleClipboardMessage(data);
-        } else if (data.type === 'auth_success') {
-          console.log('Authentication successful');
-        } else if (data.type === 'auth_error') {
-          console.error('Authentication failed:', data.error);
-        } else {
-          console.log('Received other message:', data);
+// Update the initializeWebSocketConnection function
+async function initializeWebSocketConnection() {
+  try {
+    // First get the deviceId to ensure it exists
+    const deviceId = await getOrCreateDeviceId();
+    const deviceName = await getDeviceName();
+    
+    console.log('Initializing WebSocket with deviceId:', deviceId); // Debug log
+
+    if (!deviceId) {
+      throw new Error('Failed to get or create deviceId');
+    }
+
+    initWebSocket({
+      wsUrl: process.env.REACT_APP_WS_URL,
+      getAuthMessage: async () => {
+        // Double check the deviceId is still valid
+        const currentDeviceId = await getOrCreateDeviceId();
+        console.log('Sending auth with deviceId:', currentDeviceId); // Debug log
+        
+        if (!currentDeviceId) {
+          throw new Error('DeviceId not available for auth message');
         }
-      } catch (error) {
-        console.error('Error parsing message:', error);
-      }
-    },
-    onError: handleWebSocketError,
-    onClose: handleWebSocketClose
-  });
+
+        return {
+          type: 'auth',
+          token: currentSession.access_token,
+          deviceId: currentDeviceId,
+          deviceName: deviceName,
+        };
+      },
+      onOpen: () => {
+        console.log('WebSocket connection opened');
+      },
+      onMessage: (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'clipboard') {
+            handleClipboardMessage(data);
+          } else if (data.type === 'auth_success') {
+            console.log('Authentication successful');
+          } else if (data.type === 'auth_error') {
+            console.error('Authentication failed:', data.error);
+          } else {
+            console.log('Received other message:', data);
+          }
+        } catch (error) {
+          console.error('Error parsing message:', error);
+        }
+      },
+      onError: handleWebSocketError,
+      onClose: handleWebSocketClose
+    });
+  } catch (error) {
+    console.error('Error in initializeWebSocketConnection:', error);
+    // Maybe implement retry logic here
+  }
 }

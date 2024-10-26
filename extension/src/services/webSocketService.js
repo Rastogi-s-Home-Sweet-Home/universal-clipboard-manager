@@ -5,68 +5,39 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_INTERVAL = 5000; // 5 seconds
 let previousData = null; // Store the last data sent to the WebSocket
 
-function initWebSocket(config) {
-  const { 
-    wsUrl, 
-    onOpen, 
-    onMessage, 
-    onError, 
-    onClose, 
-    getAuthMessage 
-  } = config;
+function initWebSocket({ wsUrl, getAuthMessage, onOpen, onMessage, onError, onClose }) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      if (ws) {
+        ws.close();
+      }
 
-  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
-    console.log('WebSocket is already connected or connecting');
-    return;
-  }
+      ws = new WebSocket(wsUrl);
+      
+      ws.onopen = async () => {
+        try {
+          const authMessage = await getAuthMessage();
+          console.log('Sending auth message:', authMessage); // Debug log
+          ws.send(JSON.stringify(authMessage));
+          onOpen?.();
+          resolve(ws);
+        } catch (error) {
+          console.error('Error in onopen handler:', error);
+          reject(error);
+        }
+      };
 
-  if (isConnecting) {
-    console.log('WebSocket connection attempt already in progress');
-    return;
-  }
-
-  isConnecting = true;
-  console.log('Initializing WebSocket connection...');
-
-  ws = new WebSocket(wsUrl);
-
-  ws.onopen = () => {
-    console.log('WebSocket connected');
-    isConnecting = false;
-    reconnectAttempts = 0;
-    const authMessage = getAuthMessage();
-    if (authMessage) {
-      sendMessage(authMessage);
+      ws.onmessage = onMessage;
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        onError?.(error);
+      };
+      ws.onclose = onClose;
+    } catch (error) {
+      console.error('Error initializing WebSocket:', error);
+      reject(error);
     }
-    if (onOpen) onOpen();
-  };
-
-  ws.onmessage = (event) => {
-    console.log('Received:', event.data);
-    if (onMessage) onMessage(event);
-  };
-
-  ws.onerror = (error) => {
-    console.error('WebSocket error:', error);
-    if (onError) onError(error);
-  };
-
-  ws.onclose = (event) => {
-    console.log('WebSocket disconnected:', event.code, event.reason);
-    isConnecting = false;
-    ws = null;
-    if (onClose) onClose(event);
-
-    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-      reconnectAttempts++;
-      console.log(`Attempting to reconnect (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-      setTimeout(() => initWebSocket(config), RECONNECT_INTERVAL * reconnectAttempts);
-    } else {
-      console.error('Max reconnection attempts reached');
-    }
-  };
-
-  console.log('WebSocket initial state:', ws.readyState);
+  });
 }
 
 function sendMessage(message) {
@@ -89,6 +60,7 @@ function getWebSocketState() {
   return ws ? ws.readyState : WebSocket.CLOSED;
 }
 
+// Single export statement for all functions
 export {
   initWebSocket,
   sendMessage,

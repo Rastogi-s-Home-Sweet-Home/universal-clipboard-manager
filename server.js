@@ -84,30 +84,47 @@ wss.on('connection', (ws) => {
           const { data: { user }, error } = await supabase.auth.getUser(data.token);
           if (error) throw error;
           
+          // Validate deviceId
+          if (!data.deviceId || typeof data.deviceId !== 'string' || data.deviceId.length === 0) {
+            throw new Error('Invalid deviceId');
+          }
+          
           userId = user.id;
           deviceId = data.deviceId;
           authenticated = true;
           console.log('User authenticated:', userId);
+          console.log('Device ID:', deviceId); // Log the deviceId for debugging
           ws.send(JSON.stringify({ type: 'auth_success' }));
 
           // Update device status to online
           if (deviceId) {
-            console.log('Updating device status:', deviceId);
-            const deviceName = data.deviceName || 'Unknown Device'; // Provide a default name if not provided
-            const { error } = await supabase
-              .from('devices')
-              .upsert({ 
-                id: deviceId, 
-                user_id: userId, 
-                is_online: true, 
-                last_active: new Date().toISOString(),
-                name: deviceName
-              }, { onConflict: 'id' });
-            
-            if (error) {
-              console.error('Error updating device status:', error);
-            } else {
-              console.log('Device status updated:', deviceId);
+            console.log('Updating device status for deviceId:', deviceId);
+            const deviceName = data.deviceName || 'Unknown Device';
+            try {
+              const { error: upsertError } = await supabase
+                .from('devices')
+                .upsert({ 
+                  id: deviceId, 
+                  user_id: userId, 
+                  is_online: true, 
+                  last_active: new Date().toISOString(),
+                  name: deviceName
+                }, { 
+                  onConflict: 'id',
+                  returning: true // Add this to see what was inserted/updated
+                });
+              
+              if (upsertError) {
+                console.error('Error upserting device:', upsertError);
+                throw upsertError;
+              }
+              console.log('Device status updated successfully for:', deviceId);
+            } catch (dbError) {
+              console.error('Database operation failed:', dbError);
+              ws.send(JSON.stringify({ 
+                type: 'error', 
+                error: 'Failed to update device status' 
+              }));
             }
           }
 
@@ -118,7 +135,10 @@ wss.on('connection', (ws) => {
           console.log('Client added for user:', userId);
         } catch (error) {
           console.error('Authentication error:', error);
-          ws.send(JSON.stringify({ type: 'auth_error', error: 'Invalid token' }));
+          ws.send(JSON.stringify({ 
+            type: 'auth_error', 
+            error: error.message || 'Invalid token or deviceId' 
+          }));
           ws.close();
         }
       } else if (authenticated) {

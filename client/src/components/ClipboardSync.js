@@ -5,7 +5,7 @@ import DeviceManagement from './DeviceManagement';
 import ClipboardHistory from './ClipboardHistory';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
-import { saveToHistory, updateDeviceStatus } from '../utils/dbUtils';
+import { saveToHistory, updateDeviceStatus, openDatabase } from '../utils/dbUtils';
 import { getDeviceName } from '../utils/deviceUtils';
 import { fallbackCopyTextToClipboard } from '../utils/generalUtils';
 import { useWebSocket } from '../context/WebSocketContext';
@@ -18,6 +18,7 @@ function ClipboardSync() {
   const [showHistory, setShowHistory] = useState(false);
   const [receivedReceipts, setReceivedReceipts] = useState({});
   const { wsStatus, sendMessage, connect, disconnect } = useWebSocket();
+  const [history, setHistory] = useState([]); // Add history state
 
   const handleLogout = useCallback(async () => {
     await supabase.auth.signOut();
@@ -26,84 +27,130 @@ function ClipboardSync() {
     setStatus('Logged out. Device ID retained.');
   }, [disconnect]);
 
-  const handleSend = useCallback(() => {
+  // Add loadHistory function
+  const loadHistory = useCallback(async () => {
+    try {
+      const db = await openDatabase();
+      const transaction = db.transaction(['clipboardHistory'], 'readonly');
+      const objectStore = transaction.objectStore('clipboardHistory');
+      const request = objectStore.getAll();
+
+      request.onsuccess = (event) => {
+        const result = event.target.result;
+        setHistory(result.sort((a, b) => b.timestamp - a.timestamp));
+      };
+
+      request.onerror = (event) => {
+        console.error('Error loading history:', event.target.error);
+      };
+    } catch (error) {
+      console.error('Error loading history:', error);
+    }
+  }, []);
+
+  const handleSend = useCallback(async () => {
     if (clipboardContent.trim()) {
       const contentId = Date.now().toString();
+      const deviceId = localStorage.getItem('deviceId');
       const message = {
         type: 'clipboard',
         content: clipboardContent,
         contentId,
-        deviceId: localStorage.getItem('deviceId')
+        deviceId
       };
       sendMessage(JSON.stringify(message));
-      saveToHistory(clipboardContent, 'sent', contentId, []);
-      setStatus('Content sent');
+      
+      try {
+        await saveToHistory(clipboardContent, 'sent', contentId, []);
+        await loadHistory(); // Reload history after saving
+        setStatus('Content sent');
+      } catch (error) {
+        console.error('Error saving to history:', error);
+        setStatus('Error saving to history');
+      }
     } else {
       setStatus('Nothing to send');
     }
-  }, [clipboardContent, sendMessage]);
+  }, [clipboardContent, sendMessage, loadHistory]);
 
-  const handleCopy = useCallback((content = clipboardContent) => {
+  const handleCopy = useCallback(async (content = clipboardContent) => {
     if (content) {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(content).then(() => {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(content);
+          await saveToHistory(content, 'copied', Date.now().toString(), []);
+          await loadHistory(); // Reload history after copying
           setStatus('Copied to clipboard');
-        }).catch(err => {
-          console.error('Failed to copy: ', err);
+        } else {
           fallbackCopyTextToClipboard(content);
+          await saveToHistory(content, 'copied', Date.now().toString(), []);
+          await loadHistory(); // Reload history after copying
           setStatus('Copied to clipboard (fallback method)');
-        });
-      } else {
+        }
+      } catch (err) {
+        console.error('Failed to copy:', err);
         fallbackCopyTextToClipboard(content);
+        await saveToHistory(content, 'copied', Date.now().toString(), []);
+        await loadHistory(); // Reload history after copying
         setStatus('Copied to clipboard (fallback method)');
       }
     } else {
       setStatus('Nothing to copy');
     }
-  }, [clipboardContent]);
+  }, [clipboardContent, loadHistory]);
 
+  // Update the useEffect hook to handle WebSocket messages
   useEffect(() => {
-    const handleWebSocketMessage = (event) => {
+    const handleWebSocketMessage = async (event) => {
       try {
-        let data;
-        if (typeof event.data === 'string') {
-          data = JSON.parse(event.data);
-        } else if (typeof event.data === 'object') {
-          data = event.data;
-        } else {
-          console.error('Received unknown data type:', typeof event.data);
-          return;
-        }
-
+        const data = event.detail;
         const currentDeviceId = localStorage.getItem('deviceId');
+        
         if (data.type === 'clipboard' && data.deviceId !== currentDeviceId) {
+          console.log('Received clipboard content:', data.content);
+          
           setClipboardContent(data.content);
           setStatus('Received new content');
-          saveToHistory(data.content, 'received', data.contentId, []);
-          sendMessage(JSON.stringify({ type: 'receipt', contentId: data.contentId, deviceId: currentDeviceId }));
+          
+          try {
+            await saveToHistory(data.content, 'received', data.contentId, []);
+            await loadHistory(); // Reload history after receiving
+            
+            sendMessage(JSON.stringify({ 
+              type: 'receipt', 
+              contentId: data.contentId, 
+              deviceId: currentDeviceId 
+            }));
+          } catch (error) {
+            console.error('Error saving received content to history:', error);
+          }
         } else if (data.type === 'receipt') {
           setReceivedReceipts((prev) => {
             const updatedReceipts = { ...prev };
             if (!updatedReceipts[data.contentId]) {
               updatedReceipts[data.contentId] = [];
             }
-            updatedReceipts[data.contentId].push(data.deviceId);
+            if (!updatedReceipts[data.contentId].includes(data.deviceId)) {
+              updatedReceipts[data.contentId].push(data.deviceId);
+            }
             return updatedReceipts;
           });
         }
       } catch (error) {
-        console.error('Error handling message:', error);
+        console.error('Error handling WebSocket message:', error);
       }
     };
 
-    // Set up the message listener
-    window.addEventListener('message', handleWebSocketMessage);
+    // Load initial history when component mounts
+    loadHistory();
 
-    // Clean up the listener when the component unmounts
+    // Set up WebSocket message listener
+    window.addEventListener('websocket-message', handleWebSocketMessage);
+
     return () => {
-      window.removeEventListener('message', handleWebSocketMessage);
+      window.removeEventListener('websocket-message', handleWebSocketMessage);
     };
-  }, [sendMessage]);
+  }, [sendMessage, loadHistory]);
 
   return (
     <div className="container mx-auto px-4 pt-4">
@@ -130,10 +177,7 @@ function ClipboardSync() {
       </div>
       <div className="mb-4">
         <Button 
-          onClick={() => {
-            console.log('Toggling Device Management');
-            setShowDeviceManagement(!showDeviceManagement);
-          }}
+          onClick={() => setShowDeviceManagement(!showDeviceManagement)}
           variant="outline"
           className="w-full"
         >
@@ -153,6 +197,8 @@ function ClipboardSync() {
           setClipboardContent(content);
         }}
         receivedReceipts={receivedReceipts}
+        history={history} // Pass history to ClipboardHistory component
+        setHistory={setHistory} // Pass setHistory to allow updates
       />
     </div>
   );

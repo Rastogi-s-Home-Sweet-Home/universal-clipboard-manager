@@ -1,29 +1,30 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback } from 'react';
 import { Button } from './ui/button';
 import { XMarkIcon } from '@heroicons/react/24/solid';
 import { Tooltip } from './ui/tooltip'; // Assuming you have a Tooltip component
-import { openDatabase, clearHistory } from '../utils/dbUtils'; // Import openDatabase from dbUtils
+import { openDatabase } from '../utils/dbUtils'; // Import openDatabase from dbUtils
 
-function ClipboardHistory({ isOpen, onClose, onCopy, receivedReceipts }) { // Accept receivedReceipts as a prop
-  const [history, setHistory] = useState([]);
-
-  const loadHistory = useCallback(async () => {
-    if (isOpen) {
+function ClipboardHistory({ 
+  isOpen, 
+  onClose, 
+  onCopy, 
+  receivedReceipts, 
+  history, // Add history prop
+  setHistory // Add setHistory prop
+}) {
+  // Remove the local history state since it's now passed as a prop
+  
+  const onClearHistory = useCallback(async () => {
+    try {
       const db = await openDatabase();
-      const transaction = db.transaction(['clipboardHistory'], 'readonly');
+      const transaction = db.transaction(['clipboardHistory'], 'readwrite');
       const objectStore = transaction.objectStore('clipboardHistory');
-      const request = objectStore.getAll();
-
-      request.onsuccess = (event) => {
-        const result = event.target.result;
-        setHistory(result.sort((a, b) => b.timestamp - a.timestamp).slice(0, 100));
-      };
+      await objectStore.clear();
+      setHistory([]); // Update the parent's history state
+    } catch (error) {
+      console.error('Error clearing history:', error);
     }
-  }, [isOpen]);
-
-  useEffect(() => {
-    loadHistory();
-  }, [loadHistory]);
+  }, [setHistory]);
 
   const getTypeIcon = (type) => {
     switch (type) {
@@ -36,11 +37,6 @@ function ClipboardHistory({ isOpen, onClose, onCopy, receivedReceipts }) { // Ac
       default:
         return '-';
     }
-  };
-
-  const onClearHistory = async () => {
-    await clearHistory();
-    setHistory([]);
   };
 
   if (!isOpen) return null;
