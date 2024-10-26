@@ -2,7 +2,7 @@ let ws = null;
 let isConnecting = false;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
-const RECONNECT_INTERVAL = 5000; // 5 seconds
+const RECONNECT_DELAY = 5000; // 5 seconds
 let previousData = null; // Store the last data sent to the WebSocket
 
 function initWebSocket({ wsUrl, getAuthMessage, onOpen, onMessage, onError, onClose }) {
@@ -12,27 +12,46 @@ function initWebSocket({ wsUrl, getAuthMessage, onOpen, onMessage, onError, onCl
         ws.close();
       }
 
-      ws = new WebSocket(wsUrl);
-      
-      ws.onopen = async () => {
-        try {
-          const authMessage = await getAuthMessage();
-          console.log('Sending auth message:', authMessage); // Debug log
-          ws.send(JSON.stringify(authMessage));
-          onOpen?.();
-          resolve(ws);
-        } catch (error) {
-          console.error('Error in onopen handler:', error);
-          reject(error);
-        }
+      let reconnectAttempts = 0;
+
+      const connect = async () => {
+        ws = new WebSocket(wsUrl);
+        
+        ws.onopen = async () => {
+          try {
+            const authMessage = await getAuthMessage();
+            console.log('Sending auth message:', authMessage);
+            ws.send(JSON.stringify(authMessage));
+            onOpen?.();
+            resolve(ws);
+            reconnectAttempts = 0; // Reset attempts on successful connection
+          } catch (error) {
+            console.error('Error in onopen handler:', error);
+            reject(error);
+          }
+        };
+
+        ws.onmessage = onMessage;
+        
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          onError?.(error);
+        };
+
+        ws.onclose = (event) => {
+          console.log('WebSocket closed:', event.code, event.reason);
+          onClose?.(event);
+          
+          // Attempt to reconnect if not manually closed
+          if (event.code !== 1000 && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            reconnectAttempts++;
+            console.log(`Attempting to reconnect (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+            setTimeout(connect, RECONNECT_DELAY);
+          }
+        };
       };
 
-      ws.onmessage = onMessage;
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        onError?.(error);
-      };
-      ws.onclose = onClose;
+      await connect();
     } catch (error) {
       console.error('Error initializing WebSocket:', error);
       reject(error);

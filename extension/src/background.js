@@ -496,14 +496,33 @@ chrome.runtime.onInstalled.addListener((details) => {
   }
 });
 
-// Update the initializeWebSocketConnection function
+// Add these constants at the top
+const PING_INTERVAL = 30000; // 30 seconds
+let pingIntervalId = null;
+
+// Add this function to handle periodic pings
+function startPingInterval() {
+  if (pingIntervalId) {
+    clearInterval(pingIntervalId);
+  }
+  
+  pingIntervalId = setInterval(() => {
+    if (getWebSocketState() === WebSocket.OPEN) {
+      sendMessage({ type: 'ping' });
+    } else {
+      console.log('WebSocket not open, attempting to reconnect...');
+      initializeWebSocketConnection();
+    }
+  }, PING_INTERVAL);
+}
+
+// Update initializeWebSocketConnection to start ping interval
 async function initializeWebSocketConnection() {
   try {
-    // First get the deviceId to ensure it exists
     const deviceId = await getOrCreateDeviceId();
     const deviceName = await getDeviceName();
     
-    console.log('Initializing WebSocket with deviceId:', deviceId); // Debug log
+    console.log('Initializing WebSocket with deviceId:', deviceId);
 
     if (!deviceId) {
       throw new Error('Failed to get or create deviceId');
@@ -512,9 +531,8 @@ async function initializeWebSocketConnection() {
     initWebSocket({
       wsUrl: process.env.REACT_APP_WS_URL,
       getAuthMessage: async () => {
-        // Double check the deviceId is still valid
         const currentDeviceId = await getOrCreateDeviceId();
-        console.log('Sending auth with deviceId:', currentDeviceId); // Debug log
+        console.log('Sending auth with deviceId:', currentDeviceId);
         
         if (!currentDeviceId) {
           throw new Error('DeviceId not available for auth message');
@@ -529,6 +547,7 @@ async function initializeWebSocketConnection() {
       },
       onOpen: () => {
         console.log('WebSocket connection opened');
+        startPingInterval(); // Start ping interval when connection opens
       },
       onMessage: (event) => {
         try {
@@ -539,6 +558,8 @@ async function initializeWebSocketConnection() {
             console.log('Authentication successful');
           } else if (data.type === 'auth_error') {
             console.error('Authentication failed:', data.error);
+          } else if (data.type === 'pong') {
+            console.log('Received pong from server');
           } else {
             console.log('Received other message:', data);
           }
@@ -547,10 +568,43 @@ async function initializeWebSocketConnection() {
         }
       },
       onError: handleWebSocketError,
-      onClose: handleWebSocketClose
+      onClose: (event) => {
+        console.log('WebSocket closed:', event.code, event.reason);
+        if (pingIntervalId) {
+          clearInterval(pingIntervalId);
+          pingIntervalId = null;
+        }
+        handleWebSocketClose(event);
+      }
     });
   } catch (error) {
     console.error('Error in initializeWebSocketConnection:', error);
-    // Maybe implement retry logic here
   }
 }
+
+// Add at the top of the file
+const WAKE_INTERVAL = 25; // minutes
+
+// Set up alarm when extension is installed or updated
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.alarms.create('keepAlive', {
+    periodInMinutes: WAKE_INTERVAL
+  });
+});
+
+// Listen for alarm
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'keepAlive') {
+    console.log('Alarm triggered, checking WebSocket connection...');
+    if (getWebSocketState() !== WebSocket.OPEN) {
+      console.log('WebSocket not open, reconnecting...');
+      initializeWebSocketConnection();
+    }
+  }
+});
+
+// Add connection status check when service worker wakes up
+chrome.runtime.onStartup.addListener(() => {
+  console.log('Extension starting up...');
+  initializeWebSocketConnection();
+});
