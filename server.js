@@ -7,8 +7,11 @@ const path = require('path');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
+const webpush = require('web-push');
 
 const app = express();
+
+// Use HTTP instead
 const server = http.createServer(app);
 
 const CORS_ORIGIN = process.env.NODE_ENV === 'production' 
@@ -69,6 +72,37 @@ const supabase = createClient(
   }
 );
 
+// Configure web push with proper options
+webpush.setVapidDetails(
+  'mailto:divyamsuperb@gmail.com',
+  process.env.VAPID_PUBLIC_KEY,
+  process.env.VAPID_PRIVATE_KEY
+);
+
+// Add subscription endpoint
+app.post('/subscribe', verifyToken, async (req, res) => {
+  const { subscription, deviceId } = req.body;
+  
+  try {
+    // Store subscription in Supabase
+    const { error } = await supabase
+      .from('push_subscriptions')
+      .upsert({ 
+        user_id: req.user.sub,
+        device_id: deviceId,
+        subscription: subscription  // Contains the extension identifier
+      }, { 
+        onConflict: 'device_id' 
+      });
+
+    if (error) throw error;
+    res.status(200).json({ message: 'Subscription saved' });
+  } catch (error) {
+    console.error('Error saving subscription:', error);
+    res.status(500).json({ error: 'Failed to save subscription' });
+  }
+});
+
 wss.on('connection', (ws) => {
   let authenticated = false;
   let userId = null;
@@ -128,6 +162,7 @@ wss.on('connection', (ws) => {
             }
           }
 
+          
           if (!clients.has(userId)) {
             clients.set(userId, new Set());
           }
@@ -146,12 +181,46 @@ wss.on('connection', (ws) => {
         // ... (existing message handling code)
         if (data.type === 'clipboard') {
           console.log('Broadcasting clipboard content to other devices');
-          const userClients = clients.get(userId);
-          userClients.forEach((client) => {
-            if (client !== ws && client.readyState === WebSocket.OPEN) { // Ensure we don't send to the sender
-              client.send(JSON.stringify({ type: 'clipboard', content: data.content, contentId: data.contentId, deviceId })); // Include deviceId
+          // const userClients = clients.get(userId);
+          // userClients.forEach((client) => {
+          //   if (client !== ws && client.readyState === WebSocket.OPEN) { // Ensure we don't send to the sender
+          //     client.send(JSON.stringify({ type: 'clipboard', content: data.content, contentId: data.contentId, deviceId })); // Include deviceId
+          //   }
+          // });
+          
+          // Get all subscriptions for this user
+          const { data: subscriptions } = await supabase
+            .from('push_subscriptions')
+            .select('subscription')
+            .eq('user_id', userId)
+            .neq('device_id', deviceId);  // Don't send to the device that created the content
+
+          if (subscriptions) {
+            for (const sub of subscriptions) {
+              try {
+                // Use web-push for all subscriptions
+                const result = await webpush.sendNotification(
+                  sub.subscription,
+                  JSON.stringify({
+                    type: 'clipboard',
+                    content: data.content,
+                    contentId: data.contentId,
+                    deviceId: deviceId,
+                    timestamp: Date.now()
+                  })
+                );
+              } catch (error) {
+                console.error('Error sending push notification:', error);
+                // If subscription is invalid, remove it
+                if (error.statusCode === 410) {
+                  await supabase
+                    .from('push_subscriptions')
+                    .delete()
+                    .match({ subscription: sub.subscription });
+                }
+              }
             }
-          });
+          }
         } else if (data.type === 'ping') {
           console.log('Received ping, sending pong');
           ws.send(JSON.stringify({ type: 'pong' }));
@@ -239,6 +308,7 @@ app.post('/api/devices/:id/logout', verifyToken, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on http://0.0.0.0:${PORT}`);
 });

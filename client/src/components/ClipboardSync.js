@@ -7,7 +7,7 @@ import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { saveToHistory, updateDeviceStatus, openDatabase } from '../utils/dbUtils';
 import { getDeviceName } from '../utils/deviceUtils';
-import { fallbackCopyTextToClipboard } from '../utils/generalUtils';
+import { fallbackCopyTextToClipboard, urlBase64ToUint8Array } from '../utils/generalUtils';
 import { useWebSocket } from '../context/WebSocketContext';
 import ConnectedDevices from './ConnectedDevices';
 
@@ -151,6 +151,92 @@ function ClipboardSync() {
       window.removeEventListener('websocket-message', handleWebSocketMessage);
     };
   }, [sendMessage, loadHistory]);
+
+  // Add push notification subscription
+  const registerPushNotification = useCallback(async () => {
+    try {
+      // Wait for service worker to be ready
+      const registration = await navigator.serviceWorker.ready;
+      console.log('Service worker is ready:', registration);
+
+      // Check if we already have a subscription
+      const existingSubscription = await registration.pushManager.getSubscription();
+      if (existingSubscription) {
+        console.log('Already subscribed to push notifications');
+        return;
+      }
+      
+      // Subscribe to push notifications
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(process.env.REACT_APP_VAPID_PUBLIC_KEY)
+      });
+
+      console.log('Push subscription created:', subscription);
+
+      // Send subscription to server
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        const deviceId = localStorage.getItem('deviceId');
+        const response = await fetch(`${process.env.REACT_APP_API_URL}/subscribe`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
+          },
+          body: JSON.stringify({
+            subscription,
+            deviceId
+          })
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Failed to save subscription to server: ${errorText}`);
+        }
+
+        console.log('Push subscription saved to server');
+      }
+    } catch (error) {
+      console.error('Error registering push notification:', error);
+    }
+  }, []);
+
+  // Update the useEffect to wait for service worker
+  useEffect(() => {
+    // Set up broadcast channel to receive copy requests from service worker
+    const channel = new BroadcastChannel('clipboard-channel');
+    
+    channel.onmessage = async (event) => {
+      if (event.data.type === 'copy') {
+        try {
+          await navigator.clipboard.writeText(event.data.content);
+          setStatus('Content copied to clipboard');
+          await saveToHistory(event.data.content, 'copied', Date.now().toString(), []);
+          await loadHistory();
+        } catch (error) {
+          console.error('Failed to copy content:', error);
+          setStatus('Failed to copy content');
+        }
+      }
+    };
+
+    // Wait for service worker to be ready before registering for push
+    let serviceWorkerRegistration = null;
+    navigator.serviceWorker.ready
+      .then(registration => {
+        serviceWorkerRegistration = registration;
+        console.log('Service worker is ready, registering for push');
+        return registerPushNotification();
+      })
+      .catch(error => {
+        console.error('Error waiting for service worker:', error);
+      });
+
+    return () => {
+      channel.close();
+    };
+  }, [registerPushNotification, loadHistory]);
 
   return (
     <div className="container mx-auto px-4 pt-4">

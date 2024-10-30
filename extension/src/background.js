@@ -1,19 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
-import { saveToHistory } from './utils/dbUtils';
 import { initWebSocket, sendMessage, closeWebSocket, getWebSocketState } from './services/webSocketService';
 import { getOrCreateDeviceId, getDeviceName } from './utils/deviceUtils';
+import { saveToHistory } from './utils/dbUtils';
+import supabaseService from './services/supabaseService';
+import { epochToMs } from './utils/timeUtils';
 
-let supabase;
 let currentUser = null;
 let currentSession = null;
 
-// Initialize Supabase client
-const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
-const supabaseKey = process.env.REACT_APP_SUPABASE_KEY;
-
-function epochToMs(epochSeconds) {
-  return epochSeconds * 1000;
-}
+// Add these imports and constants at the top
+const PING_INTERVAL = 30000; // 30 seconds
+let pingIntervalId = null;
 
 // Closure to manage clipboard data
 const clipboardManager = (() => {
@@ -32,27 +29,49 @@ const clipboardManager = (() => {
   };
 })();
 
-// Modify the initSupabase function
-async function initSupabase(session) {
-  if (!supabase) {
-    supabase = createClient(supabaseUrl, supabaseKey, {
-      auth: {
-        autoRefreshToken: true,
-        persistSession: true,
-        detectSessionInUrl: false
+// Function to register push notification
+async function registerPushNotification() {
+  try {
+    const { data: { session } } = await supabaseService.getSession();
+    if (session) {
+      const deviceId = await getOrCreateDeviceId();
+      
+      // Subscribe to push using the service worker (background.js itself)
+      const subscription = await self.registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(process.env.REACT_APP_VAPID_PUBLIC_KEY)
+      });
+
+      const subscribeUrl = `${process.env.REACT_APP_API_URL}/subscribe`;
+      const response = await fetch(subscribeUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          subscription,
+          deviceId
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to send subscription to server: ${errorText}`);
       }
-    });
+
+      console.log('Push notification subscription registered');
+    }
+  } catch (error) {
+    console.error('Error registering push notification:', error);
+    throw error;
   }
-  if (session) {
-    await supabase.auth.setSession(session);
-  }
-  return supabase;
 }
 
 // Function to refresh the session
 async function refreshSession() {
   try {
-    const { data, error } = await supabase.auth.refreshSession();
+    const { data, error } = await supabaseService.refreshSession();
     if (error) throw error;
     if (data.session) {
       chrome.storage.local.set({ supabaseSession: data.session });
@@ -69,7 +88,7 @@ async function refreshSession() {
 async function checkAndRefreshSession() {
   try {
     if (!currentSession) {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await supabaseService.getSession();
       currentSession = session;
     }
     if (currentSession) {
@@ -83,7 +102,7 @@ async function checkAndRefreshSession() {
 
       if (expiresAt < fiveMinutesFromNow) {
         console.log('Session expiring soon, refreshing...');
-        const { data, error } = await supabase.auth.refreshSession();
+        const { data, error } = await supabaseService.refreshSession();
         if (error) throw error;
         currentSession = data.session;
         chrome.storage.local.set({ supabaseSession: currentSession });
@@ -99,47 +118,47 @@ async function checkAndRefreshSession() {
   }
 }
 
-// Initialize Supabase and WebSocket on extension load
+const WAKE_INTERVAL = 25;
+
+// Keep only this single consolidated onInstalled listener
 chrome.runtime.onInstalled.addListener(async (details) => {
+  console.log('Extension installed/updated:', details.reason);
+
+  // Initialize core services
   await initializeSupabaseAndWebSocket();
 
-  // Request notification permission on install
-  if (details.reason === 'install') {
-    chrome.notifications.getPermissionLevel((level) => {
-      if (level !== 'granted') {
-        chrome.permissions.request({
-          permissions: ['notifications']
-        }, (granted) => {
-          if (granted) {
-            console.log('Notification permission granted');
-          } else {
-            console.log('Notification permission denied');
-          }
-        });
-      }
-    });
-  }
-  checkNotificationPermission(); // Check permission on install
+  // Set up keep-alive alarm
+  chrome.alarms.create('keepAlive', {
+    periodInMinutes: WAKE_INTERVAL
+  });
 });
 
-// Periodically check and refresh the session
+// Single onStartup handler
+chrome.runtime.onStartup.addListener(async () => {
+  console.log('Extension starting up...');
+  await initializeSupabaseAndWebSocket();
+});
+
+// Single interval for both session and WebSocket checks
+const CHECK_INTERVAL = 30000; // 30 seconds
 setInterval(async () => {
-  console.log('Performing periodic session check');
+  // Check session first
   if (await checkAndRefreshSession()) {
     console.log('Session is valid');
+    // Then check WebSocket state
     if (getWebSocketState() === WebSocket.CLOSED) {
-      console.log('WebSocket is closed, reinitializing...');
-      initializeWebSocketConnection();
+      console.log('WebSocket not connected, attempting to reconnect...');
+      await initializeWebSocketConnection();
     }
   } else {
     console.log('Session is invalid or expired');
   }
-}, 5 * 60 * 1000); // Check every 5 minutes
+}, CHECK_INTERVAL);
 
 // Function to handle clipboard messages
 function handleClipboardMessage(data) {
   console.log('Handling clipboard message:', data);
-  
+
   clipboardManager.setClipboardData(data);
 
   const newItem = {
@@ -149,12 +168,14 @@ function handleClipboardMessage(data) {
   };
   saveToHistory(newItem);
 
+  // Create notification with copy action
   chrome.notifications.create({
     type: 'basic',
     iconUrl: chrome.runtime.getURL('icon128.png'),
     title: 'New clipboard content received',
     message: data.content.substring(0, 50) + (data.content.length > 50 ? '...' : ''),
-    priority: 1,
+    priority: 1, // High priority to ensure delivery
+    requireInteraction: true, // Keep notification until user interacts
     buttons: [{ title: 'Copy' }]
   }, (notificationId) => {
     if (chrome.runtime.lastError) {
@@ -163,10 +184,15 @@ function handleClipboardMessage(data) {
       console.log('Notification created with ID:', notificationId);
     }
   });
+
+  // Wake up the extension and establish WebSocket connection if needed
+  if (getWebSocketState() !== WebSocket.OPEN) {
+    initializeWebSocketConnection();
+  }
 }
 
 function sendMessageToTab(tabId, message) {
-  chrome.tabs.sendMessage(tabId, message, function(response) {
+  chrome.tabs.sendMessage(tabId, message, function (response) {
     if (chrome.runtime.lastError) {
       console.log('Error sending message to tab:', chrome.runtime.lastError.message);
       injectContentScriptAndRetry(tabId, message);
@@ -206,7 +232,7 @@ async function sendClipboardContent(content) {
   try {
     if (await checkAndRefreshSession()) {
       if (!currentUser) {
-        const { data: { user } } = await supabase.auth.getUser();
+        const { data: { user } } = await supabaseService.getUser();
         currentUser = user;
       }
       if (!currentUser) {
@@ -240,13 +266,13 @@ async function sendClipboardContent(content) {
 
       if (getWebSocketState() === WebSocket.OPEN) {
         const contentId = Date.now().toString();
-        sendMessage({ 
-          type: 'clipboard', 
+        sendMessage({
+          type: 'clipboard',
           content,
           contentId,
           deviceId
         });
-        
+
         const newItem = {
           content: content.trim(),
           type: 'sent',
@@ -255,7 +281,7 @@ async function sendClipboardContent(content) {
           deviceId // Include deviceId in history
         };
         await saveToHistory(newItem);
-        
+
         return { success: true };
       } else {
         throw new Error('WebSocket not in OPEN state after reconnection attempt');
@@ -291,6 +317,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.action === 'signup') {
     signup(request.email, request.password).then(sendResponse);
     return true;  // Indicates we will send a response asynchronously
+  } else {
+    console.error('Received: ', request, 'from: ', sender);
+    return true;
   }
 });
 
@@ -301,9 +330,16 @@ async function initializeSupabaseAndWebSocket() {
     if (supabaseSession) {
       console.log('Stored session expires at:', new Date(epochToMs(supabaseSession.expires_at)).toISOString());
     }
-    await initSupabase(supabaseSession);
+    await supabaseService.setSession(supabaseSession);
     if (await checkAndRefreshSession()) {
-      initializeWebSocketConnection();
+      await initializeWebSocketConnection();
+      // Try to register push notifications if we have a valid session
+      try {
+        await registerPushNotification();
+      } catch (pushError) {
+        console.error('Failed to register push notifications during initialization:', pushError);
+        // Continue even if push registration fails
+      }
     } else {
       console.log('No valid session found during initialization');
     }
@@ -315,10 +351,7 @@ async function initializeSupabaseAndWebSocket() {
 // Modify other functions that use supabase to ensure it's initialized
 async function checkAuthStatus() {
   try {
-    if (!supabase) {
-      await initSupabase();
-    }
-    const { data, error } = await supabase.auth.getSession();
+    const { data, error } = await supabaseService.getSession();
     if (error) throw error;
     return { isAuthenticated: !!data.session };
   } catch (error) {
@@ -330,20 +363,26 @@ async function checkAuthStatus() {
 // Modify login function to send auth message after successful login
 async function login(email, password) {
   try {
-    if (!supabase) {
-      await initSupabase();
-    }
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: email,
-      password: password,
-    });
+    await supabaseService.setSession(null);
+    const { data, error } = await supabaseService.login(email, password);
     if (error) throw error;
     console.log('Login successful, user:', data.user);
     currentUser = data.user;
     currentSession = data.session;
     console.log('Session expires at:', new Date(epochToMs(currentSession.expires_at)).toISOString());
     chrome.storage.local.set({ supabaseSession: currentSession });
-    initializeWebSocketConnection();
+
+    // Initialize WebSocket first
+    await initializeWebSocketConnection();
+
+    // Then register push notifications
+    try {
+      await registerPushNotification();
+    } catch (pushError) {
+      console.error('Failed to register push notifications:', pushError);
+      // Continue even if push registration fails
+    }
+
     return { success: true, user: data.user };
   } catch (error) {
     console.error('Login error:', error);
@@ -353,11 +392,7 @@ async function login(email, password) {
 
 async function logout() {
   try {
-    if (!supabase) {
-      console.error('Supabase client not initialized');
-      return { success: false, error: 'Supabase client not initialized' };
-    }
-    await supabase.auth.signOut();
+    await supabaseService.setSession(null);
     closeWebSocket();
     chrome.storage.local.remove('supabaseSession');
     currentUser = null;
@@ -369,23 +404,6 @@ async function logout() {
   }
 }
 
-// Function to check notification permission
-function checkNotificationPermission() {
-  chrome.notifications.getPermissionLevel((level) => {
-    if (level !== 'granted') {
-      // Send a message to the popup to inform the user
-      chrome.runtime.sendMessage({ action: 'notifyPermissionDenied' });
-    }
-  });
-}
-
-// Initialize WebSocket connection when the service worker starts
-chrome.runtime.onStartup.addListener(() => {
-  initializeSupabaseAndWebSocket().then(() => {
-    checkNotificationPermission();
-  });
-});
-
 // Set up periodic WebSocket status check
 setInterval(() => {
   if (getWebSocketState() === WebSocket.CLOSED) {
@@ -394,51 +412,17 @@ setInterval(() => {
   }
 }, 30000); // Check every 30 seconds
 
-// Add this listener to handle notification button clicks
-chrome.notifications.onButtonClicked.addListener(function (notificationId, buttonIndex) {
-    if (buttonIndex === 0) {
-        // Check if the Copy button was clicked
-        var data = clipboardManager.getClipboardData(); // Get data using closure
-        if (data) {
-            // Send the copyToClipboard message to the active tab's content script
-            chrome.tabs.query({
-                active: true,
-                currentWindow: true
-            }, function (tabs) {
-                if (tabs[0]) {
-                    chrome.tabs.sendMessage(tabs[0].id, {
-                        action: 'copyToClipboard',
-                        content: data.content
-                    }, function (response) {
-                        if (response && response.success) {
-                            clipboardManager.clearClipboardData(); // Clear clipboard data after copying
-                        } else {
-                            console.error('Failed to copy content:', response.error);
-                        }
-                    });
-                } else {
-                    console.error('No active tab found to send message');
-                }
-            });
-        } else {
-            console.error('No clipboard data available to copy.');
-        }
-    }
-});
 
 // Add this function to handle sign-up
 async function signup(email, password) {
   try {
-    if (!supabase) {
+    if (!supabaseService) {
       console.error('Supabase client not initialized');
       return { success: false, error: 'Supabase client not initialized' };
     }
-    const { data, error } = await supabase.auth.signUp({
-      email: email,
-      password: password,
-    });
+    const { data, error } = await supabaseService.signup(email, password);
     if (error) throw error;
-    
+
     if (data.user) {
       if (data.session) {
         // User already exists and password is correct, they're now logged in
@@ -469,43 +453,12 @@ function logError(message, error) {
   console.error('Error stack:', error.stack);
 }
 
-function checkAndRequestNotificationPermission() {
-  chrome.permissions.contains({
-    permissions: ['notifications']
-  }, (result) => {
-    if (result) {
-      console.log('Notification permission already granted');
-    } else {
-      chrome.permissions.request({
-        permissions: ['notifications']
-      }, (granted) => {
-        if (granted) {
-          console.log('Notification permission granted');
-        } else {
-          console.log('Notification permission denied');
-        }
-      });
-    }
-  });
-}
-
-// Call this function when the extension is installed or updated
-chrome.runtime.onInstalled.addListener((details) => {
-  if (details.reason === 'install' || details.reason === 'update') {
-    checkAndRequestNotificationPermission();
-  }
-});
-
-// Add these constants at the top
-const PING_INTERVAL = 30000; // 30 seconds
-let pingIntervalId = null;
-
 // Add this function to handle periodic pings
 function startPingInterval() {
   if (pingIntervalId) {
     clearInterval(pingIntervalId);
   }
-  
+
   pingIntervalId = setInterval(() => {
     if (getWebSocketState() === WebSocket.OPEN) {
       sendMessage({ type: 'ping' });
@@ -522,32 +475,35 @@ async function initializeWebSocketConnection() {
     const deviceId = await getOrCreateDeviceId();
     const deviceName = await getDeviceName();
     
-    console.log('Initializing WebSocket with deviceId:', deviceId);
-
-    if (!deviceId) {
-      throw new Error('Failed to get or create deviceId');
+    // Ensure we have a valid session before initializing WebSocket
+    await checkAndRefreshSession();
+    const { data: { session } } = await supabaseService.getSession();
+    
+    if (!session) {
+      throw new Error('No valid session available');
     }
+
+    console.log('Initializing WebSocket with deviceId:', deviceId);
 
     initWebSocket({
       wsUrl: process.env.REACT_APP_WS_URL,
       getAuthMessage: async () => {
-        const currentDeviceId = await getOrCreateDeviceId();
-        console.log('Sending auth with deviceId:', currentDeviceId);
-        
-        if (!currentDeviceId) {
-          throw new Error('DeviceId not available for auth message');
+        // Get fresh session right before sending auth message
+        const { data: { session: currentSession } } = await supabaseService.getSession();
+        if (!currentSession) {
+          throw new Error('No valid session for auth message');
         }
-
+        
         return {
           type: 'auth',
           token: currentSession.access_token,
-          deviceId: currentDeviceId,
+          deviceId: deviceId,
           deviceName: deviceName,
         };
       },
       onOpen: () => {
         console.log('WebSocket connection opened');
-        startPingInterval(); // Start ping interval when connection opens
+        startPingInterval();
       },
       onMessage: (event) => {
         try {
@@ -558,10 +514,12 @@ async function initializeWebSocketConnection() {
             console.log('Authentication successful');
           } else if (data.type === 'auth_error') {
             console.error('Authentication failed:', data.error);
+            // Try to refresh session and reconnect
+            checkAndRefreshSession().then(() => {
+              initializeWebSocketConnection();
+            });
           } else if (data.type === 'pong') {
             console.log('Received pong from server');
-          } else {
-            console.log('Received other message:', data);
           }
         } catch (error) {
           console.error('Error parsing message:', error);
@@ -582,16 +540,6 @@ async function initializeWebSocketConnection() {
   }
 }
 
-// Add at the top of the file
-const WAKE_INTERVAL = 25; // minutes
-
-// Set up alarm when extension is installed or updated
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.alarms.create('keepAlive', {
-    periodInMinutes: WAKE_INTERVAL
-  });
-});
-
 // Listen for alarm
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'keepAlive') {
@@ -603,8 +551,91 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
-// Add connection status check when service worker wakes up
-chrome.runtime.onStartup.addListener(() => {
-  console.log('Extension starting up...');
-  initializeWebSocketConnection();
+// Function to convert VAPID key to Uint8Array
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding)
+    .replace(/\-/g, '+')
+    .replace(/_/g, '/');
+
+  const rawData = self.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+// Add push event listener
+self.addEventListener('push', function (event) {
+  console.log(`Push had this data/text: "${event.data.text()}"`);
 });
+
+self.addEventListener('push', function(event) {
+  if (event.data) {
+    console.log('received push', event)
+    const data = event.data.json();
+    
+    // Store the clipboard data
+    clipboardManager.setClipboardData(data);
+
+    // Show notification
+    self.registration.showNotification('Universal Clipboard', {
+      body: data.content.substring(0, 50) + (data.content.length > 50 ? '...' : ''),
+      icon: 'icon128.png',
+      badge: 'icon128.png',
+      data: data,
+      actions: [{ action: 'copy', title: 'Copy' }]
+    });
+  }
+});
+
+// Add notification click handler
+self.addEventListener('notificationclick', function(event) {
+  event.notification.close();
+  
+  if (event.action === 'copy') {
+    const data = event.notification.data;
+    // Use the existing clipboard handling logic
+    copyToClipboard(data.content);
+  }
+});
+
+// Function to handle copying text to clipboard
+async function copyToClipboard(text) {
+  // Check if offscreen document exists
+  const existingContexts = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT']
+  });
+
+  if (existingContexts.length === 0) {
+    // Create an offscreen document if one doesn't exist
+    await chrome.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['CLIPBOARD'],
+      justification: 'Write text to clipboard'
+    });
+  }
+
+  // Send the text to the offscreen document
+  await chrome.runtime.sendMessage({
+    type: 'copy-to-clipboard',
+    content: text
+  });
+
+  /* On successful copy, if a webpage is in view, I want to invoke the toast logic in content.js */
+  // Get the active tab to show toast notification
+  try {
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (activeTab?.id) {
+      // Send message to content script to show toast
+      await chrome.tabs.sendMessage(activeTab.id, {
+        action: 'showToast',
+        message: 'Copied to clipboard'
+      });
+    }
+  } catch (error) {
+    console.error('Error showing toast notification:', error);
+  }
+}

@@ -61,6 +61,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }, 1000); // Wait for 100 milliseconds
 
         return true; // Indicates that the response is sent asynchronously
+    } else if (request.action === 'showToast') {
+        showToast(request.message);
+        sendResponse({ success: true });
+        return true;
     }
 });
 

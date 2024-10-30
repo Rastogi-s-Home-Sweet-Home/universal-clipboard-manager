@@ -4,11 +4,12 @@
   "version": "1.0",
   "description": "Sync clipboard across devices",
   "permissions": [
+    "notifications",
     "storage",
     "clipboardRead",
+    "offscreen",
     "clipboardWrite",
     "activeTab",
-    "notifications",
     "webRequest",
     "tabs",
     "scripting",
@@ -43,5 +44,9 @@
     "16": "icon16.png",
     "48": "icon48.png",
     "128": "icon128.png"
-  }
+  },
+  "web_accessible_resources": [{
+    "resources": ["offscreen.html", "offscreen.js"],
+    "matches": ["<all_urls>"]
+  }]
 }

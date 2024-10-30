@@ -7,7 +7,8 @@ module.exports = {
   entry: {
     popup: './src/popup.jsx',
     background: './src/background.js',
-    content: './src/content.js'
+    content: './src/content.js',
+    offscreen: './src/offscreen.js'
   },
   output: {
     path: path.resolve(__dirname, 'dist'),
@@ -36,6 +37,11 @@ module.exports = {
       template: './src/popup.html',
       filename: 'popup.html',
       chunks: ['popup'],
+    }),
+    new HtmlWebpackPlugin({
+      template: './src/offscreen.html',
+      filename: 'offscreen.html',
+      chunks: ['offscreen'],
     }),
     new CopyPlugin({
       patterns: [
