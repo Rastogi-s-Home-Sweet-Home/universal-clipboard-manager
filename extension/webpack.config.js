@@ -2,6 +2,7 @@ const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const CopyPlugin = require('copy-webpack-plugin');
 const Dotenv = require('dotenv-webpack');
+const WorkboxPlugin = require('workbox-webpack-plugin');
 
 module.exports = {
   entry: {
@@ -50,6 +51,14 @@ module.exports = {
       ],
     }),
     new Dotenv(),
+    new WorkboxPlugin.InjectManifest({
+      swSrc: './public/service-worker.js',
+      swDest: 'service-worker.js',
+      additionalManifestEntries: [
+        { url: '/logo192.png', revision: null },
+        { url: '/logo512.png', revision: null }
+      ]
+    }),
   ],
   resolve: {
     extensions: ['.js', '.jsx'],
