@@ -141,26 +141,6 @@ export function useClipboardSync(isExtension = false) {
     }
   }, [isExtension]);
 
-  // Add a listener for incoming messages
-  useEffect(() => {
-    const handleWebSocketMessage = (event) => {
-      if (event.data.type === 'clipboard') {
-        const newItem = {
-          content: event.data.content,
-          type: 'received',
-          timestamp: Date.now(),
-        };
-        setHistory((prev) => [...prev, newItem]); // Update history state
-      }
-    };
-
-    window.addEventListener('message', handleWebSocketMessage);
-
-    return () => {
-      window.removeEventListener('message', handleWebSocketMessage);
-    };
-  }, []);
-
   return {
     clipboardContent,
     setClipboardContent,

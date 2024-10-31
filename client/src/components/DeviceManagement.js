@@ -3,7 +3,6 @@ import { supabase } from '../supabaseClient';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { XMarkIcon } from '@heroicons/react/24/solid';
-import { useWebSocket } from '../context/WebSocketContext'; // Import the context
 import { useToast } from './ui/toast'; // Import the toast hook
 
 function DeviceManagement({ isOpen, onClose, devices, onDevicesUpdated, isLoading }) {
@@ -11,7 +10,6 @@ function DeviceManagement({ isOpen, onClose, devices, onDevicesUpdated, isLoadin
   const [editingDevice, setEditingDevice] = useState(null);
   const [newName, setNewName] = useState('');
   const currentDeviceId = localStorage.getItem('deviceId'); // Get the current device ID
-  const wsRef = useWebSocket(); // Use the context
 
   const handleDelete = async (id) => {
     try {
@@ -69,11 +67,6 @@ function DeviceManagement({ isOpen, onClose, devices, onDevicesUpdated, isLoadin
       if (id === currentDeviceId) {
         localStorage.removeItem('deviceId'); // Remove deviceId from localStorage
         await supabase.auth.signOut(); // Log out the user
-        // Send logout message to all connected devices
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          const message = JSON.stringify({ type: 'logout' });
-          wsRef.current.send(message);
-        }
         window.location.reload(); // Reload the page
       } else {
         onDevicesUpdated(); // Call this instead of fetchDevices

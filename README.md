@@ -8,7 +8,7 @@ Universal Clipboard Manager is a real-time, cross-device clipboard synchronizati
 - Secure user authentication
 - Device management
 - Clipboard history tracking
-- WebSocket-based real-time updates
+- Web Push based real-time updates
 - Responsive design for various screen sizes
 - Chrome extension for easy access
 
@@ -17,7 +17,7 @@ Universal Clipboard Manager is a real-time, cross-device clipboard synchronizati
 - Frontend: React.js with Tailwind CSS
 - Backend: Node.js with Express
 - Database: Supabase
-- Real-time Communication: WebSockets
+- Real-time Communication: Web Push API
 - Authentication: Supabase Auth
 - Chrome Extension: React-based popup
 

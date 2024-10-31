@@ -2,7 +2,6 @@ require('dotenv').config();
 
 const express = require('express');
 const http = require('http');
-const WebSocket = require('ws');
 const path = require('path');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
@@ -57,8 +56,6 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'client/build/index.html'));
 });
 
-const wss = new WebSocket.Server({ server });
-
 const clients = new Map();
 
 const supabase = createClient(
@@ -101,163 +98,6 @@ app.post('/subscribe', verifyToken, async (req, res) => {
     console.error('Error saving subscription:', error);
     res.status(500).json({ error: 'Failed to save subscription' });
   }
-});
-
-wss.on('connection', (ws) => {
-  let authenticated = false;
-  let userId = null;
-  let deviceId = null;
-
-  ws.on('message', async (message) => {
-    console.log('Received message:', message.toString());
-    try {
-      const data = JSON.parse(message);
-      if (data.type === 'auth') {
-        // Handle authentication
-        try {
-          const { data: { user }, error } = await supabase.auth.getUser(data.token);
-          if (error) throw error;
-          
-          // Validate deviceId
-          if (!data.deviceId || typeof data.deviceId !== 'string' || data.deviceId.length === 0) {
-            throw new Error('Invalid deviceId');
-          }
-          
-          userId = user.id;
-          deviceId = data.deviceId;
-          authenticated = true;
-          console.log('User authenticated:', userId);
-          console.log('Device ID:', deviceId); // Log the deviceId for debugging
-          ws.send(JSON.stringify({ type: 'auth_success' }));
-
-          // Update device status to online
-          if (deviceId) {
-            console.log('Updating device status for deviceId:', deviceId);
-            const deviceName = data.deviceName || 'Unknown Device';
-            try {
-              const { error: upsertError } = await supabase
-                .from('devices')
-                .upsert({ 
-                  id: deviceId, 
-                  user_id: userId, 
-                  is_online: true, 
-                  last_active: new Date().toISOString(),
-                  name: deviceName
-                }, { 
-                  onConflict: 'id',
-                  returning: true // Add this to see what was inserted/updated
-                });
-              
-              if (upsertError) {
-                console.error('Error upserting device:', upsertError);
-                throw upsertError;
-              }
-              console.log('Device status updated successfully for:', deviceId);
-            } catch (dbError) {
-              console.error('Database operation failed:', dbError);
-              ws.send(JSON.stringify({ 
-                type: 'error', 
-                error: 'Failed to update device status' 
-              }));
-            }
-          }
-
-          
-          if (!clients.has(userId)) {
-            clients.set(userId, new Set());
-          }
-          clients.get(userId).add(ws);
-          console.log('Client added for user:', userId);
-        } catch (error) {
-          console.error('Authentication error:', error);
-          ws.send(JSON.stringify({ 
-            type: 'auth_error', 
-            error: error.message || 'Invalid token or deviceId' 
-          }));
-          ws.close();
-        }
-      } else if (authenticated) {
-        // Handle other message types (clipboard, ping, etc.)
-        // ... (existing message handling code)
-        if (data.type === 'clipboard') {
-          console.log('Broadcasting clipboard content to other devices');
-          // const userClients = clients.get(userId);
-          // userClients.forEach((client) => {
-          //   if (client !== ws && client.readyState === WebSocket.OPEN) { // Ensure we don't send to the sender
-          //     client.send(JSON.stringify({ type: 'clipboard', content: data.content, contentId: data.contentId, deviceId })); // Include deviceId
-          //   }
-          // });
-          
-          // Get all subscriptions for this user
-          const { data: subscriptions } = await supabase
-            .from('push_subscriptions')
-            .select('subscription')
-            .eq('user_id', userId)
-            .neq('device_id', deviceId);  // Don't send to the device that created the content
-
-          if (subscriptions) {
-            for (const sub of subscriptions) {
-              try {
-                // Use web-push for all subscriptions
-                const result = await webpush.sendNotification(
-                  sub.subscription,
-                  JSON.stringify({
-                    type: 'clipboard',
-                    content: data.content,
-                    contentId: data.contentId,
-                    deviceId: deviceId,
-                    timestamp: Date.now()
-                  })
-                );
-              } catch (error) {
-                console.error('Error sending push notification:', error);
-                // If subscription is invalid, remove it
-                if (error.statusCode === 410) {
-                  await supabase
-                    .from('push_subscriptions')
-                    .delete()
-                    .match({ subscription: sub.subscription });
-                }
-              }
-            }
-          }
-        } else if (data.type === 'ping') {
-          console.log('Received ping, sending pong');
-          ws.send(JSON.stringify({ type: 'pong' }));
-        }
-      } else {
-        
-        console.error('Received message before authentication');
-        ws.send(JSON.stringify({ type: 'auth_error', error: 'Not authenticated' }));
-      }
-    } catch (error) {
-      console.error('Error handling message:', error);
-    }
-  });
-
-  ws.on('close', async () => {
-    if (authenticated && userId) {
-      console.log('WebSocket connection closed for user:', userId);
-      // Update device status to offline
-      if (deviceId) {
-        await supabase
-          .from('devices')
-          .update({ is_online: false, last_active: new Date().toISOString() })
-          .eq('id', deviceId);
-      }
-
-      const userClients = clients.get(userId);
-      userClients.delete(ws);
-      if (userClients.size === 0) {
-        clients.delete(userId);
-      }
-    }
-  });
-
-  ws.on('pong', () => {
-    // Reset the connection timeout on pong reception
-    console.log('Received pong from client');
-  });
 });
 
 // Device management routes
@@ -304,6 +144,54 @@ app.post('/api/devices/:id/logout', verifyToken, async (req, res) => {
     res.status(400).json({ error: error.message });
   } else {
     res.json({ message: 'Device logged out successfully' });
+  }
+});
+
+// Add new endpoint for sending clipboard data
+app.post('/api/clipboard', verifyToken, async (req, res) => {
+  const { content, contentId } = req.body;
+  const userId = req.user.sub;
+  const deviceId = req.body.deviceId;
+
+  try {
+    // Get all subscriptions for this user except the sending device
+    const { data: subscriptions } = await supabase
+      .from('push_subscriptions')
+      .select('subscription')
+      .eq('user_id', userId)
+      .neq('device_id', deviceId);
+
+    if (subscriptions) {
+      // Send push notifications to all subscribed devices
+      for (const sub of subscriptions) {
+        try {
+          await webpush.sendNotification(
+            sub.subscription,
+            JSON.stringify({
+              type: 'clipboard',
+              content: content,
+              contentId: contentId,
+              deviceId: deviceId,
+              timestamp: Date.now()
+            })
+          );
+        } catch (error) {
+          console.error('Error sending push notification:', error);
+          // If subscription is invalid, remove it
+          if (error.statusCode === 410) {
+            await supabase
+              .from('push_subscriptions')
+              .delete()
+              .match({ subscription: sub.subscription });
+          }
+        }
+      }
+    }
+
+    res.status(200).json({ message: 'Clipboard content sent successfully' });
+  } catch (error) {
+    console.error('Error sending clipboard content:', error);
+    res.status(500).json({ error: 'Failed to send clipboard content' });
   }
 });
 
