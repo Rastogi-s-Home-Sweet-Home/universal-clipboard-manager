@@ -52,7 +52,7 @@ function ClipboardSync() {
       
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        const response = await fetch(`${process.env.REACT_APP_API_URL}/api/clipboard`, {
+        const response = await fetch(`${process.env.REACT_APP_API_URL}api/clipboard`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -94,7 +94,7 @@ function ClipboardSync() {
         const deviceId = localStorage.getItem('deviceId');
         const { data: { session } } = await supabase.auth.getSession();
         
-        const response = await fetch(`${process.env.REACT_APP_API_URL}/api/clipboard`, {
+        const response = await fetch(`${process.env.REACT_APP_API_URL}api/clipboard`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

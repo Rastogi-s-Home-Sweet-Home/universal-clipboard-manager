@@ -26,7 +26,7 @@ export async function registerPushNotification() {
     const { data: { session } } = await supabase.auth.getSession();
     if (session) {
       const deviceId = localStorage.getItem('deviceId');
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/subscribe`, {
+      const response = await fetch(`${process.env.REACT_APP_API_URL}subscribe`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

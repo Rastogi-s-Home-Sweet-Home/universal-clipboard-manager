@@ -35,7 +35,7 @@ async function registerPushNotification() {
         applicationServerKey: urlBase64ToUint8Array(process.env.REACT_APP_VAPID_PUBLIC_KEY)
       });
 
-      const subscribeUrl = `${process.env.REACT_APP_API_URL}/subscribe`;
+      const subscribeUrl = `${process.env.REACT_APP_API_URL}subscribe`;
       const response = await fetch(subscribeUrl, {
         method: 'POST',
         headers: {
@@ -141,7 +141,7 @@ async function sendClipboardContent(content) {
       const contentId = Date.now().toString();
 
       const { data: { session } } = await supabaseService.getSession();
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/api/clipboard`, {
+      const response = await fetch(`${process.env.REACT_APP_API_URL}api/clipboard`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
