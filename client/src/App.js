@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import AuthForm from './components/AuthForm';
 import ClipboardSync from './components/ClipboardSync';
 import { ToastProvider } from './components/ui/toast';
+import InstallPWA from './components/InstallPWA';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -38,6 +39,7 @@ function App() {
         <footer className="bg-secondary text-secondary-foreground p-4 text-center">
           <p>&copy; 2024 Clipboard Sync. All rights reserved.</p>
         </footer>
+        <InstallPWA />
       </div>
     </ToastProvider>
   );
