@@ -7,12 +7,12 @@ import InstallPWA from './components/InstallPWA';
 
 const generateDeviceId = () => {
   let deviceId = localStorage.getItem('deviceId');
-  
+
   if (!deviceId) {
     deviceId = `web-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     localStorage.setItem('deviceId', deviceId);
   }
-  
+
   return deviceId;
 };
 
@@ -35,10 +35,10 @@ function App() {
       navigator.serviceWorker.register('/service-worker.js')
         .then(async registration => {
           console.log('SW registered with deviceId:', deviceId);
-          
+
           const subscription = await registration.pushManager.subscribe({
             userVisibleOnly: true,
-            applicationServerKey: YOUR_VAPID_PUBLIC_KEY
+            applicationServerKey: process.env.REACT_APP_VAPID_PUBLIC_KEY
           });
 
           await fetch('/subscribe', {
