@@ -5,24 +5,33 @@ import ClipboardSync from './components/ClipboardSync';
 import { ToastProvider } from './components/ui/toast';
 import InstallPWA from './components/InstallPWA';
 
+// Get VAPID key from environment variable
+const VAPID_PUBLIC_KEY = process.env.REACT_APP_VAPID_PUBLIC_KEY;
+
 const generateDeviceId = () => {
   let deviceId = localStorage.getItem('deviceId');
-
+  
   if (!deviceId) {
     deviceId = `web-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     localStorage.setItem('deviceId', deviceId);
   }
-
+  
   return deviceId;
 };
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [deviceId] = useState(() => generateDeviceId());
+  const [session, setSession] = useState(null);
 
   useEffect(() => {
+    // Get initial session
+    const session = supabase.auth.getSession();
+    setSession(session);
+
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       setIsAuthenticated(!!session);
+      setSession(session);
     });
 
     return () => {
@@ -31,31 +40,51 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/service-worker.js')
-        .then(async registration => {
-          console.log('SW registered with deviceId:', deviceId);
+    const registerServiceWorker = async () => {
+      if (!('serviceWorker' in navigator) || !isAuthenticated || !session) {
+        return;
+      }
 
-          const subscription = await registration.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: process.env.REACT_APP_VAPID_PUBLIC_KEY
-          });
+      try {
+        const registration = await navigator.serviceWorker.register('/service-worker.js');
+        console.log('SW registered with deviceId:', deviceId);
+        
+        const subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: process.env.REACT_APP_VAPID_PUBLIC_KEY
+        });
 
-          await fetch('/subscribe', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${accessToken}`
-            },
-            body: JSON.stringify({
-              subscription,
-              deviceId
-            })
-          });
-        })
-        .catch(error => console.error('SW registration failed:', error));
-    }
-  }, [deviceId]);
+        // Get the access token from the session
+        const { access_token } = session;
+        
+        if (!access_token) {
+          throw new Error('No access token available');
+        }
+
+        const response = await fetch('/subscribe', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${access_token}`
+          },
+          body: JSON.stringify({
+            subscription,
+            deviceId
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to register subscription');
+        }
+
+        console.log('Push subscription successful');
+      } catch (error) {
+        console.error('SW registration failed:', error);
+      }
+    };
+
+    registerServiceWorker();
+  }, [deviceId, isAuthenticated, session]);
 
   return (
     <ToastProvider>
