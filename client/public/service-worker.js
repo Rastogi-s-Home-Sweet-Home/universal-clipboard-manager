@@ -8,6 +8,14 @@ const CLIPBOARD_CHANNEL = 'universal-clipboard-channel';
 const VERSION = '1.0.1';
 const CACHE_NAME = `universal-clipboard-v${VERSION}`;
 
+const DEBUG = true;
+
+function log(...args) {
+  if (DEBUG) {
+    console.log('[ServiceWorker]', ...args);
+  }
+}
+
 // Precache and route all build-time assets
 precacheAndRoute(self.__WB_MANIFEST || []);
 
@@ -46,6 +54,7 @@ registerRoute(
 // Handle push notifications
 self.addEventListener('push', async function(event) {
   console.log('Push notification received:', event.data ? event.data.text() : 'no payload');
+  console.log('Push received, current deviceId:', localStorage.getItem('deviceId'));
   
   if (event.data) {
     try {
@@ -118,30 +127,38 @@ self.addEventListener('notificationclick', function(event) {
 
 // Handle service worker lifecycle
 self.addEventListener('install', (event) => {
-  console.log('Installing new service worker version:', VERSION);
-  // Skip waiting automatically to prevent stale cache issues
-  self.skipWaiting();
+  log('Installing Service Worker');
+  event.waitUntil(
+    Promise.all([
+      self.skipWaiting(), // Take control immediately
+      caches.open(CACHE_NAME).then(cache => {
+        log('Caching app shell');
+        return cache.addAll([
+          '/',
+          '/index.html',
+          '/manifest.json'
+        ]);
+      })
+    ])
+  );
 });
 
 self.addEventListener('activate', (event) => {
-  console.log('Activating new service worker version:', VERSION);
-  console.log('Clients:', self.clients); // Debug log
+  log('Activating Service Worker');
   event.waitUntil(
     Promise.all([
+      self.clients.claim(), // Take control of all clients
+      // Clear old caches
       caches.keys().then(cacheNames => {
-        console.log('Existing caches:', cacheNames); // Debug log
         return Promise.all(
           cacheNames
             .filter(cacheName => cacheName.startsWith('universal-clipboard-'))
             .filter(cacheName => cacheName !== CACHE_NAME)
             .map(cacheName => {
-              console.log('Deleting cache:', cacheName); // Debug log
+              log('Deleting old cache:', cacheName);
               return caches.delete(cacheName);
             })
         );
-      }),
-      self.clients.claim().then(() => {
-        console.log('Claimed all clients'); // Debug log
       })
     ])
   );

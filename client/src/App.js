@@ -18,6 +18,7 @@ const generateDeviceId = () => {
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [deviceId] = useState(() => generateDeviceId());
 
   useEffect(() => {
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
@@ -28,6 +29,33 @@ function App() {
       authListener.subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/service-worker.js')
+        .then(async registration => {
+          console.log('SW registered with deviceId:', deviceId);
+          
+          const subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: YOUR_VAPID_PUBLIC_KEY
+          });
+
+          await fetch('/subscribe', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${accessToken}`
+            },
+            body: JSON.stringify({
+              subscription,
+              deviceId
+            })
+          });
+        })
+        .catch(error => console.error('SW registration failed:', error));
+    }
+  }, [deviceId]);
 
   return (
     <ToastProvider>

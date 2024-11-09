@@ -1,59 +1,29 @@
 {
   "short_name": "Universal Clipboard",
-  "name": "Universal Clipboard",
-  "description": "Sync clipboard across devices",
+  "name": "Universal Clipboard Manager",
   "icons": [
     {
-      "src": "android-chrome-192x192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any"
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
     },
     {
       "src": "android-chrome-192x192.png",
+      "type": "image/png",
       "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "maskable"
+      "purpose": "any maskable"
     },
     {
       "src": "android-chrome-512x512.png",
-      "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "android-chrome-512x512.png",
       "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "maskable"
+      "purpose": "any maskable"
     }
   ],
-  "screenshots": [
-    {
-      "src": "screenshot-wide.png",
-      "sizes": "1920x1080",
-      "type": "image/png",
-      "form_factor": "wide"
-    },
-    {
-      "src": "screenshot-narrow.png",
-      "sizes": "1080x1920",
-      "type": "image/png",
-      "form_factor": "narrow"
-    }
-  ],
-  "start_url": "/",
+  "start_url": ".",
   "display": "standalone",
   "theme_color": "#000000",
   "background_color": "#ffffff",
-  "orientation": "any",
   "scope": "/",
-  "categories": ["productivity", "utilities"],
-  "shortcuts": [
-    {
-      "name": "Copy Clipboard",
-      "url": "/",
-      "icons": [{ "src": "android-chrome-192x192.png", "sizes": "192x192" }]
-    }
-  ]
+  "orientation": "any"
 }
