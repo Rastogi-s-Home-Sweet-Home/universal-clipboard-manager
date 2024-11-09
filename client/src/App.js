@@ -5,6 +5,17 @@ import ClipboardSync from './components/ClipboardSync';
 import { ToastProvider } from './components/ui/toast';
 import InstallPWA from './components/InstallPWA';
 
+const generateDeviceId = () => {
+  let deviceId = localStorage.getItem('deviceId');
+  
+  if (!deviceId) {
+    deviceId = `web-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    localStorage.setItem('deviceId', deviceId);
+  }
+  
+  return deviceId;
+};
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 

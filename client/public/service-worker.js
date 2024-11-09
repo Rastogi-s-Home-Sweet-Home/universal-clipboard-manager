@@ -48,33 +48,53 @@ self.addEventListener('push', async function(event) {
   console.log('Push notification received:', event.data ? event.data.text() : 'no payload');
   
   if (event.data) {
-    const data = event.data.json();
-    console.log('Parsed push data:', data); // Debug log
-    const channel = new BroadcastChannel(CLIPBOARD_CHANNEL);
-    
     try {
-      console.log('Broadcasting to channel:', CLIPBOARD_CHANNEL); // Debug log
+      const data = event.data.json();
+      console.log('Parsed push data:', data); // Debug log
+      
+      // Validate required fields
+      if (!data.content) {
+        throw new Error('Push notification missing required content field');
+      }
+
+      // Use a fallback for deviceId if it's null
+      const deviceId = data.deviceId || 'unknown-device';
+      
+      const channel = new BroadcastChannel(CLIPBOARD_CHANNEL);
+      
+      console.log('Broadcasting to channel:', CLIPBOARD_CHANNEL, {
+        type: 'clipboard',
+        content: data.content,
+        contentId: data.contentId || `fallback-${Date.now()}`,
+        deviceId: deviceId,
+        timestamp: data.timestamp || Date.now()
+      });
+
       channel.postMessage({
         type: 'clipboard',
         content: data.content,
-        contentId: data.contentId,
-        deviceId: data.deviceId,
-        timestamp: data.timestamp
+        contentId: data.contentId || `fallback-${Date.now()}`,
+        deviceId: deviceId,
+        timestamp: data.timestamp || Date.now()
       });
 
-      console.log('Showing notification for content:', data.content.substring(0, 50)); // Debug log
       await self.registration.showNotification('Universal Clipboard', {
-        body: `Received: ${data.content.substring(0, 50)}${data.content.length > 50 ? '...' : ''}`,
+        body: `Received from ${deviceId}: ${data.content.substring(0, 50)}${data.content.length > 50 ? '...' : ''}`,
         icon: '/android-chrome-192x192.png',
         badge: '/android-chrome-192x192.png',
-        data: data,
+        data: {
+          ...data,
+          deviceId: deviceId // Ensure deviceId is passed through
+        },
         actions: [{ action: 'copy', title: 'Copy' }],
         requireInteraction: true
       });
     } catch (error) {
-      console.error('Failed to handle push:', error, error.stack); // Enhanced error logging
+      console.error('Failed to handle push:', error, error.stack, {
+        rawData: event.data ? event.data.text() : 'no data',
+      }); // Enhanced error logging
     } finally {
-      channel.close();
+      channel?.close();
     }
   }
 });

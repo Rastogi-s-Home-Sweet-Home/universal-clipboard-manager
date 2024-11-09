@@ -151,44 +151,58 @@ app.post('/api/devices/:id/logout', verifyToken, async (req, res) => {
 app.post('/api/clipboard', verifyToken, async (req, res) => {
   const { content, contentId } = req.body;
   const userId = req.user.sub;
-  const deviceId = req.body.deviceId;
+  const deviceId = req.body.deviceId || `mobile-${Date.now()}`; // Add fallback for mobile
+
+  console.log('Received clipboard request:', {
+    userId,
+    deviceId,
+    contentId,
+    contentPreview: content.substring(0, 50)
+  });
 
   try {
     // Get all subscriptions for this user except the sending device
     const { data: subscriptions } = await supabase
       .from('push_subscriptions')
-      .select('subscription')
+      .select('subscription, device_id')
       .eq('user_id', userId)
       .neq('device_id', deviceId);
+
+    console.log(`Found ${subscriptions?.length || 0} subscriptions to notify`);
 
     if (subscriptions) {
       // Send push notifications to all subscribed devices
       for (const sub of subscriptions) {
         try {
-          await webpush.sendNotification(
-            sub.subscription,
-            JSON.stringify({
-              type: 'clipboard',
-              content: content,
-              contentId: contentId,
-              deviceId: deviceId,
-              timestamp: Date.now()
-            })
-          );
+          const payload = JSON.stringify({
+            type: 'clipboard',
+            content: content,
+            contentId: contentId,
+            deviceId: deviceId, // This will now have a value
+            timestamp: Date.now()
+          });
+          
+          console.log(`Sending notification to device: ${sub.device_id}`);
+          await webpush.sendNotification(sub.subscription, payload);
         } catch (error) {
-          console.error('Error sending push notification:', error);
+          console.error(`Error sending push notification to ${sub.device_id}:`, error);
           // If subscription is invalid, remove it
           if (error.statusCode === 410) {
             await supabase
               .from('push_subscriptions')
               .delete()
               .match({ subscription: sub.subscription });
+            console.log(`Removed invalid subscription for device ${sub.device_id}`);
           }
         }
       }
     }
 
-    res.status(200).json({ message: 'Clipboard content sent successfully' });
+    res.status(200).json({ 
+      message: 'Clipboard content sent successfully',
+      deviceId: deviceId, // Return the deviceId used
+      recipientCount: subscriptions?.length || 0
+    });
   } catch (error) {
     console.error('Error sending clipboard content:', error);
     res.status(500).json({ error: 'Failed to send clipboard content' });
