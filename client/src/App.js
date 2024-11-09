@@ -42,6 +42,11 @@ function App() {
   useEffect(() => {
     const registerServiceWorker = async () => {
       if (!('serviceWorker' in navigator) || !isAuthenticated || !session) {
+        console.log('Prerequisites not met:', {
+          serviceWorkerSupported: 'serviceWorker' in navigator,
+          isAuthenticated,
+          hasSession: !!session
+        });
         return;
       }
 
@@ -49,17 +54,21 @@ function App() {
         const registration = await navigator.serviceWorker.register('/service-worker.js');
         console.log('SW registered with deviceId:', deviceId);
         
+        // Check if we already have a subscription
+        const existingSubscription = await registration.pushManager.getSubscription();
+        if (existingSubscription) {
+          console.log('Existing push subscription found');
+        }
+        
+        // Subscribe to push
         const subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: process.env.REACT_APP_VAPID_PUBLIC_KEY
+          applicationServerKey: VAPID_PUBLIC_KEY
         });
+        console.log('Push subscription created:', subscription);
 
-        // Get the access token from the session
         const { access_token } = session;
-        
-        if (!access_token) {
-          throw new Error('No access token available');
-        }
+        console.log('Got access token:', !!access_token);
 
         const response = await fetch('/subscribe', {
           method: 'POST',
@@ -73,13 +82,20 @@ function App() {
           })
         });
 
+        const responseData = await response.json();
+        console.log('Subscription registration response:', responseData);
+
         if (!response.ok) {
-          throw new Error('Failed to register subscription');
+          throw new Error(`Failed to register subscription: ${responseData.error || response.statusText}`);
         }
 
-        console.log('Push subscription successful');
+        console.log('Push subscription successfully registered with server');
       } catch (error) {
-        console.error('SW registration failed:', error);
+        console.error('SW registration or subscription failed:', error);
+        // If it's a permission error, we should handle it
+        if (error.name === 'NotAllowedError') {
+          console.log('Push notification permission was denied');
+        }
       }
     };
 

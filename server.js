@@ -79,21 +79,31 @@ webpush.setVapidDetails(
 // Add subscription endpoint
 app.post('/subscribe', verifyToken, async (req, res) => {
   const { subscription, deviceId } = req.body;
+  console.log('Received subscription request:', {
+    userId: req.user.sub,
+    deviceId,
+    hasSubscription: !!subscription
+  });
   
   try {
     // Store subscription in Supabase
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('push_subscriptions')
       .upsert({ 
         user_id: req.user.sub,
         device_id: deviceId,
-        subscription: subscription  // Contains the extension identifier
+        subscription: subscription
       }, { 
         onConflict: 'device_id' 
       });
 
-    if (error) throw error;
-    res.status(200).json({ message: 'Subscription saved' });
+    if (error) {
+      console.error('Error saving subscription:', error);
+      throw error;
+    }
+
+    console.log('Subscription saved successfully for device:', deviceId);
+    res.status(200).json({ message: 'Subscription saved', deviceId });
   } catch (error) {
     console.error('Error saving subscription:', error);
     res.status(500).json({ error: 'Failed to save subscription' });
