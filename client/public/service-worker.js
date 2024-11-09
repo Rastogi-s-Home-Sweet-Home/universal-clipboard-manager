@@ -5,34 +5,41 @@ const { registerRoute } = workbox.routing;
 const { StaleWhileRevalidate, NetworkFirst } = workbox.strategies;
 
 const CLIPBOARD_CHANNEL = 'universal-clipboard-channel';
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
+const CACHE_NAME = `universal-clipboard-v${VERSION}`;
 
-// Cache static assets
+// Precache and route all build-time assets
 precacheAndRoute(self.__WB_MANIFEST || []);
 
-// Cache app shell (HTML, CSS, JS)
+// Handle JavaScript and CSS files with NetworkFirst strategy
 registerRoute(
   ({ request }) => 
-    request.destination === 'style' ||
     request.destination === 'script' ||
-    request.destination === 'document',
+    request.destination === 'style',
   new NetworkFirst({
-    cacheName: 'app-shell',
+    cacheName: 'assets-cache',
     plugins: [
       new workbox.cacheableResponse.CacheableResponsePlugin({
-        statuses: [200],
+        statuses: [0, 200]
       }),
-    ],
+      new workbox.expiration.ExpirationPlugin({
+        maxEntries: 60,
+        maxAgeSeconds: 30 * 24 * 60 * 60 // 30 days
+      })
+    ]
   })
 );
 
-// Cache static assets (images, fonts)
+// Handle navigation requests (HTML)
 registerRoute(
-  ({ request }) => 
-    request.destination === 'image' ||
-    request.destination === 'font',
-  new StaleWhileRevalidate({
-    cacheName: 'static-assets',
+  ({ request }) => request.mode === 'navigate',
+  new NetworkFirst({
+    cacheName: 'pages-cache',
+    plugins: [
+      new workbox.cacheableResponse.CacheableResponsePlugin({
+        statuses: [0, 200]
+      })
+    ]
   })
 );
 
@@ -83,30 +90,34 @@ self.addEventListener('notificationclick', function(event) {
 });
 
 // Handle service worker lifecycle
-self.addEventListener('message', (event) => {
-  if (event.data?.type === 'SKIP_WAITING') {
-    self.skipWaiting();
-  }
-});
-
 self.addEventListener('install', (event) => {
   console.log('Installing new service worker version:', VERSION);
-  event.waitUntil(self.skipWaiting());
+  // Skip waiting automatically to prevent stale cache issues
+  self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
   console.log('Activating new service worker version:', VERSION);
   event.waitUntil(
     Promise.all([
-      self.clients.claim(),
       // Clean up old caches
-      caches.keys().then(keys => Promise.all(
-        keys.map(key => {
-          if (key.startsWith('workbox-') && !key.endsWith(VERSION)) {
-            return caches.delete(key);
-          }
-        })
-      ))
+      caches.keys().then(cacheNames => {
+        return Promise.all(
+          cacheNames
+            .filter(cacheName => cacheName.startsWith('universal-clipboard-'))
+            .filter(cacheName => cacheName !== CACHE_NAME)
+            .map(cacheName => caches.delete(cacheName))
+        );
+      }),
+      // Take control of all clients immediately
+      self.clients.claim()
     ])
   );
+});
+
+// Handle immediate activation requests
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
